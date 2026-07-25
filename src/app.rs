@@ -2,12 +2,13 @@ use crate::icons::icon;
 use crate::ipc;
 use crate::markdown::{render_markdown, render_streaming_markdown};
 use crate::models::{
-    format_relative_time, new_id, now_millis, title_from_question, BootstrapResponse,
-    ConnectionInfo, Conversation, InputMessage, Message, ResearchEvent, ResearchRequest,
-    ResearchResponse, Source, Workspace,
+    format_relative_time, new_id, now_millis, remove_conversation, title_from_question,
+    BootstrapResponse, ConnectionInfo, Conversation, InputMessage, Message, ResearchEvent,
+    ResearchRequest, ResearchResponse, Source, Workspace,
 };
 use serde::Serialize;
-use sycamore::futures::spawn_local_scoped;
+use std::collections::VecDeque;
+use sycamore::futures::{spawn_local, spawn_local_scoped};
 use sycamore::prelude::*;
 use sycamore::web::events::{Event, KeyboardEvent, SubmitEvent};
 use sycamore::web::{Suspense, Transition};
@@ -48,6 +49,10 @@ struct AppState {
     toast_kind: Signal<String>,
     storage_label: Signal<String>,
     storage_writable: Signal<bool>,
+    persistence_queue: Signal<VecDeque<PersistenceRequest>>,
+    persistence_busy: Signal<bool>,
+    delete_rollback: Signal<Option<DeleteRollback>>,
+    next_rollback_id: Signal<u64>,
 }
 
 impl AppState {
@@ -77,6 +82,10 @@ impl AppState {
             toast_kind: create_signal(String::from("info")),
             storage_label: create_signal(String::from("이 기기에만 저장됨")),
             storage_writable: create_signal(true),
+            persistence_queue: create_signal(VecDeque::new()),
+            persistence_busy: create_signal(false),
+            delete_rollback: create_signal(None),
+            next_rollback_id: create_signal(0),
         }
     }
 
@@ -147,32 +156,152 @@ impl AppState {
     }
 
     fn persist_workspace(self) {
-        let snapshot = self.workspace.get_clone_untracked();
+        let delete_rollback_id = self
+            .delete_rollback
+            .with_untracked(|rollback| rollback.as_ref().map(|rollback| rollback.id));
+        self.persist_workspace_with_message(None, delete_rollback_id);
+    }
+
+    fn persist_workspace_with_message(
+        self,
+        success_message: Option<&'static str>,
+        delete_rollback_id: Option<u64>,
+    ) {
+        self.persistence_queue.update(|queue| {
+            queue.push_back(PersistenceRequest {
+                workspace: self.workspace.get_clone_untracked(),
+                success_message,
+                delete_rollback_id,
+            });
+        });
+        self.storage_writable.set(false);
         self.save_state.set("saving".into());
-        spawn_local_scoped(async move {
-            match ipc::command::<_, u64>(
+        self.persist_next_workspace();
+    }
+
+    fn persist_next_workspace(self) {
+        if self.persistence_busy.get_untracked() {
+            return;
+        }
+        let Some(mut request) = self
+            .persistence_queue
+            .with_untracked(|queue| queue.front().cloned())
+        else {
+            return;
+        };
+        self.persistence_queue.update(|queue| {
+            queue.pop_front();
+        });
+        request.workspace.revision = self
+            .workspace
+            .with_untracked(|workspace| workspace.revision);
+        self.persistence_busy.set(true);
+
+        // This queue can start the next save after the originating event handler's
+        // reactive scope has been destroyed. Keep the task on the app-owned signals
+        // instead of binding it to that short-lived event scope.
+        spawn_local(async move {
+            let result = ipc::command::<_, u64>(
                 "save_workspace",
                 &WorkspaceArgs {
-                    workspace: snapshot,
+                    workspace: request.workspace,
                 },
             )
-            .await
-            {
+            .await;
+            if !self.workspace.is_alive() {
+                return;
+            }
+            let succeeded = match result {
                 Ok(revision) => {
-                    batch(move || {
-                        // Revision is persistence metadata and is not rendered. Updating it
-                        // silently avoids invalidating every workspace-derived selector.
-                        self.workspace
-                            .update_silent(|value| value.revision = revision);
-                        self.save_state.set("saved".into());
-                    });
+                    // Revision is persistence metadata and is not rendered. Updating it
+                    // silently avoids invalidating every workspace-derived selector.
+                    self.workspace
+                        .update_silent(|value| value.revision = revision);
+                    if request.delete_rollback_id.is_some_and(|request_id| {
+                        self.delete_rollback.with_untracked(|rollback| {
+                            rollback
+                                .as_ref()
+                                .is_some_and(|rollback| rollback.id == request_id)
+                        })
+                    }) {
+                        self.delete_rollback.set(None);
+                    }
+                    if request.delete_rollback_id.is_none() {
+                        if let Some(message) = request.success_message {
+                            self.show_toast(message, "success");
+                        }
+                    }
+                    true
                 }
-                Err(error) => self.save_state.set(format!("error:{error}")),
+                Err(error) => {
+                    if self.persistence_queue.with_untracked(VecDeque::is_empty) {
+                        if request.delete_rollback_id.is_some_and(|request_id| {
+                            self.delete_rollback.with_untracked(|rollback| {
+                                rollback
+                                    .as_ref()
+                                    .is_some_and(|rollback| rollback.id == request_id)
+                            })
+                        }) {
+                            self.restore_deleted_conversation();
+                        }
+                        self.save_state.set(format!("error:{error}"));
+                        self.show_toast(
+                            format!("변경 사항을 저장하지 못했습니다: {error}"),
+                            "error",
+                        );
+                    }
+                    false
+                }
+            };
+            self.persistence_busy.set(false);
+            if self.persistence_queue.with_untracked(VecDeque::is_empty) {
+                if succeeded {
+                    self.save_state.set("saved".into());
+                    self.storage_writable.set(true);
+                    if request.delete_rollback_id.is_some() {
+                        if let Some(message) = request.success_message {
+                            self.show_toast(message, "success");
+                        }
+                    }
+                }
+            } else {
+                self.save_state.set("saving".into());
+                self.persist_next_workspace();
             }
         });
     }
 
+    fn restore_deleted_conversation(self) {
+        let Some(rollback) = self.delete_rollback.take() else {
+            return;
+        };
+        let conversation_id = rollback.conversation.id.clone();
+        self.workspace.update(|workspace| {
+            if workspace
+                .conversations
+                .iter()
+                .any(|conversation| conversation.id == conversation_id)
+            {
+                return;
+            }
+            let index = rollback.index.min(workspace.conversations.len());
+            workspace.conversations.insert(index, rollback.conversation);
+        });
+        if rollback.was_active && self.active_id.with_untracked(String::is_empty) {
+            batch(move || {
+                self.active_id.set(conversation_id);
+                self.selected_sources.set(rollback.selected_sources);
+            });
+            reset_viewport_scroll();
+        }
+    }
+
     fn select_conversation(self, id: String) {
+        if self.persistence_busy.get_untracked()
+            || !self.persistence_queue.with_untracked(VecDeque::is_empty)
+        {
+            return;
+        }
         let sources = self
             .workspace
             .with_untracked(|workspace| source_list(workspace, &id));
@@ -185,6 +314,11 @@ impl AppState {
     }
 
     fn new_conversation(self) {
+        if self.persistence_busy.get_untracked()
+            || !self.persistence_queue.with_untracked(VecDeque::is_empty)
+        {
+            return;
+        }
         batch(move || {
             self.active_id.set(String::new());
             self.selected_sources.set(Vec::new());
@@ -194,25 +328,58 @@ impl AppState {
         reset_viewport_scroll();
     }
 
-    fn delete_conversation(self) {
-        let id = self.active_id.get_clone_untracked();
+    fn delete_conversation(self, id: String) {
         if id.is_empty() {
             return;
         }
+        let exists = self.workspace.with_untracked(|workspace| {
+            workspace
+                .conversations
+                .iter()
+                .any(|conversation| conversation.id == id)
+        });
+        if !exists {
+            return;
+        }
+        let is_active = self.active_id.get_clone_untracked() == id;
+        let rollback_id = self.next_rollback_id.get_untracked().saturating_add(1);
+        self.next_rollback_id.set(rollback_id);
+        let rollback = self.workspace.with_untracked(|workspace| {
+            workspace
+                .conversations
+                .iter()
+                .position(|conversation| conversation.id == id)
+                .map(|index| DeleteRollback {
+                    id: rollback_id,
+                    conversation: workspace.conversations[index].clone(),
+                    index,
+                    was_active: is_active,
+                    selected_sources: self.selected_sources.get_clone_untracked(),
+                })
+        });
+        let Some(rollback) = rollback else {
+            return;
+        };
+        self.delete_rollback.set(Some(rollback));
         batch(move || {
             self.workspace.update(|value| {
-                value
-                    .conversations
-                    .retain(|conversation| conversation.id != id)
+                remove_conversation(value, &id);
             });
-            self.active_id.set(String::new());
-            self.selected_sources.set(Vec::new());
+            if is_active {
+                self.active_id.set(String::new());
+                self.selected_sources.set(Vec::new());
+            }
         });
-        reset_viewport_scroll();
-        self.persist_workspace();
+        if is_active {
+            reset_viewport_scroll();
+        }
+        self.persist_workspace_with_message(Some("대화 기록을 삭제했습니다."), Some(rollback_id));
     }
 
     fn toggle_pin(self) {
+        if !self.storage_writable.get_untracked() {
+            return;
+        }
         let id = self.active_id.get_clone_untracked();
         self.workspace.update(|value| {
             if let Some(conversation) = value
@@ -230,6 +397,18 @@ impl AppState {
     fn retry_question(self) {
         let question = self.last_failed_question.get_clone_untracked();
         if question.is_empty() {
+            return;
+        }
+        if !self.storage_writable.get_untracked() {
+            self.show_toast(
+                "대화 기록 저장이 완료되거나 복구된 뒤 다시 시도해 주세요.",
+                "warning",
+            );
+            return;
+        }
+        if !self.key_configured.get_untracked() {
+            self.panel.set(Panel::Settings);
+            self.show_toast("먼저 설정에서 Sakana API 키를 연결해 주세요.", "warning");
             return;
         }
         let failed_id = self.active_id.get_clone_untracked();
@@ -260,13 +439,19 @@ impl AppState {
                 }
             });
         });
-        self.persist_workspace();
         self.send_question();
     }
 
     fn send_question(self) {
         let question = self.composer.get_clone_untracked().trim().to_owned();
         if question.is_empty() || self.is_running.get_untracked() {
+            return;
+        }
+        if !self.storage_writable.get_untracked() {
+            self.show_toast(
+                "대화 기록 저장이 완료되거나 복구된 뒤 다시 시도해 주세요.",
+                "warning",
+            );
             return;
         }
         if question.chars().count() > 20_000 {
@@ -556,6 +741,22 @@ struct WorkspaceArgs {
     workspace: Workspace,
 }
 
+#[derive(Clone)]
+struct PersistenceRequest {
+    workspace: Workspace,
+    success_message: Option<&'static str>,
+    delete_rollback_id: Option<u64>,
+}
+
+#[derive(Clone)]
+struct DeleteRollback {
+    id: u64,
+    conversation: Conversation,
+    index: usize,
+    was_active: bool,
+    selected_sources: Vec<Source>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RequestIdArgs {
@@ -620,6 +821,48 @@ fn is_mobile_viewport() -> bool {
         .and_then(|window| window.inner_width().ok())
         .and_then(|width| width.as_f64())
         .is_some_and(|width| width <= 860.0)
+}
+
+/// Registers document-level keyboard shortcuts for the whole app:
+/// - `Escape` closes any open panel from anywhere, so keyboard users can dismiss
+///   the modal settings/sources dialogs even when focus is inside them.
+/// - `Ctrl`/`Cmd` + `N` starts a new conversation, matching the shortcut hint the
+///   sidebar already advertises next to the "새 대화" button.
+fn install_global_shortcuts(state: AppState) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let handler =
+        Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |event: web_sys::KeyboardEvent| {
+            if event.key() == "Escape" {
+                if state.panel.get_untracked() != Panel::None {
+                    event.prevent_default();
+                    state.close_panel();
+                }
+                return;
+            }
+            if event.default_prevented() {
+                return;
+            }
+            let new_conversation_combo = (event.meta_key() || event.ctrl_key())
+                && !event.shift_key()
+                && !event.alt_key()
+                && matches!(event.key().as_str(), "n" | "N");
+            if new_conversation_combo {
+                if state.is_running.get_untracked() || !state.storage_writable.get_untracked() {
+                    return;
+                }
+                event.prevent_default();
+                state.new_conversation();
+            }
+        });
+    let target = document.clone();
+    let _ = target.add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
+    on_cleanup(move || {
+        let _ = document
+            .remove_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());
+        drop(handler);
+    });
 }
 
 fn reset_viewport_scroll() {
@@ -733,6 +976,7 @@ fn mode_depth(mode: &str) -> &'static str {
 pub fn App() -> View {
     let state = AppState::new();
     provide_context(state);
+    install_global_shortcuts(state);
     on_mount(reset_viewport_scroll);
 
     view! {
@@ -783,21 +1027,13 @@ async fn BootstrapWorkspace() -> View {
     match ipc::command::<_, BootstrapResponse>("bootstrap", &EmptyArgs {}).await {
         Ok(response) => {
             update_theme(&response.workspace.settings.theme);
-            let first_id = response
-                .workspace
-                .conversations
-                .iter()
-                .max_by_key(|conversation| conversation.updated_at)
-                .map(|conversation| conversation.id.clone())
-                .unwrap_or_default();
-            let sources = source_list(&response.workspace, &first_id);
             let notices = [response.recovery_notice, response.credential_notice]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
             batch(move || {
-                state.selected_sources.set(sources);
-                state.active_id.set(first_id);
+                state.selected_sources.set(Vec::new());
+                state.active_id.set(String::new());
                 state.key_configured.set(response.key_configured);
                 state.connection_message.set(if response.key_configured {
                     "보안 저장소에서 자동 복원됨".into()
@@ -955,17 +1191,36 @@ fn HistoryItem(props: HistoryItemProps) -> View {
     let id = conversation.id.clone();
     let class_id = id.clone();
     let click_id = id.clone();
+    let delete_id = id.clone();
+    let delete_label = format!("{} 대화 삭제", conversation.title);
     view! {
-        button(
-            class=move || format!("history-item {}", if state.active_id.get_clone() == class_id { "active" } else { "" }),
-            aria-current=move || if state.active_id.get_clone() == id { "page" } else { "false" },
-            disabled=state.is_running,
-            on:click=move |_| state.select_conversation(click_id.clone())
+        div(
+            class=move || format!("history-item {}", if state.active_id.get_clone() == class_id { "active" } else { "" })
         ) {
-            span(class="history-glyph") { (if conversation.pinned { icon("pin") } else { icon("search") }) }
-            span(class="history-copy") {
-                strong { (conversation.title) }
-                small { (format_relative_time(conversation.updated_at)) }
+            button(
+                class="history-select",
+                aria-current=move || if state.active_id.get_clone() == id { "page" } else { "false" },
+                disabled=move || state.is_running.get() || !state.storage_writable.get(),
+                on:click=move |_| state.select_conversation(click_id.clone())
+            ) {
+                span(class="history-glyph") { (if conversation.pinned { icon("pin") } else { icon("search") }) }
+                span(class="history-copy") {
+                    strong { (conversation.title) }
+                    small { (format_relative_time(conversation.updated_at)) }
+                }
+            }
+            button(
+                class="history-delete",
+                aria-label=delete_label,
+                title="대화 삭제",
+                disabled=move || {
+                    state.is_running.get()
+                        || state.persistence_busy.get()
+                        || !state.storage_writable.get()
+                },
+                on:click=move |_| state.delete_conversation(delete_id.clone())
+            ) {
+                (icon("trash"))
             }
         }
     }
@@ -1549,10 +1804,6 @@ fn Composer() -> View {
         state.send_question();
     };
     let keydown = move |event: KeyboardEvent| {
-        if event.key() == "Escape" && state.panel.get_untracked() != Panel::None {
-            state.close_panel();
-            return;
-        }
         if event.key() == "Enter" && !event.shift_key() && !event.is_composing() {
             event.prevent_default();
             state.send_question();
@@ -1624,7 +1875,7 @@ fn Composer() -> View {
                     div(class="model-controls") {
                         label {
                             span(class="sr-only") { "Fugu 모델" }
-                            select(on:change=move |event: Event| {
+                            select(disabled=move || !state.storage_writable.get(), on:change=move |event: Event| {
                                 if let Some(value) = select_value(event) {
                                     state.workspace.update(|workspace| workspace.settings.model = value);
                                     state.persist_workspace();
@@ -1637,7 +1888,7 @@ fn Composer() -> View {
                         span(class="control-divider") {}
                         label {
                             span(class="sr-only") { "추론 강도" }
-                            select(on:change=move |event: Event| {
+                            select(disabled=move || !state.storage_writable.get(), on:change=move |event: Event| {
                                 if let Some(value) = select_value(event) {
                                     state.workspace.update(|workspace| workspace.settings.reasoning = value);
                                     state.persist_workspace();
@@ -1656,11 +1907,20 @@ fn Composer() -> View {
                     })
                 }
             }
-            p(class=move || format!("composer-hint {}", if state.storage_writable.get() { "" } else { "storage-error" }), role=move || if state.storage_writable.get() { "note" } else { "alert" }) {
-                (move || if state.storage_writable.get() {
-                    "Enter로 전송 · Shift+Enter로 줄바꿈 · 출처는 반드시 원문에서 다시 확인하세요"
-                } else {
-                    "저장된 대화를 복구해야 해서 현재 읽기 전용입니다. 새 질문을 보내거나 기록을 저장할 수 없습니다."
+            p(class=move || format!("composer-hint {}", if state.storage_writable.get() { "" } else { "storage-error" }), role=move || if state.storage_writable.get() { "note" } else { "status" }) {
+                (move || match state.save_state.get_clone().as_str() {
+                    "saving" => {
+                        "대화 기록을 안전하게 저장하는 중입니다. 완료되면 입력을 다시 사용할 수 있습니다."
+                    }
+                    value if value.starts_with("error:") => {
+                        "대화 기록을 저장하지 못했습니다. 앱을 다시 열어 최신 기록을 확인해 주세요."
+                    }
+                    _ if !state.storage_writable.get() => {
+                        "저장된 대화를 복구해야 해서 현재 읽기 전용입니다. 새 질문을 보내거나 기록을 저장할 수 없습니다."
+                    }
+                    _ => {
+                        "Enter로 전송 · Shift+Enter로 줄바꿈 · 출처는 반드시 원문에서 다시 확인하세요"
+                    }
                 })
             }
         }
@@ -1690,6 +1950,7 @@ fn ModeButton(props: ModeButtonProps) -> View {
             role="radio",
             aria-checked=move || selected.get().to_string(),
             class=move || if selected.get() { "active" } else { "" },
+            disabled=move || !state.storage_writable.get(),
             on:click=move |_| {
                 state.workspace.update(|workspace| workspace.settings.last_mode = props.value.into());
                 state.persist_workspace();
@@ -1777,6 +2038,7 @@ fn SourceView(props: SourceViewProps) -> View {
 fn SettingsPanel() -> View {
     let state = use_context::<AppState>();
     let has_active_conversation = create_selector(move || !state.active_id.with(String::is_empty));
+    let active_conversation_id = create_memo(move || state.active_id.get_clone());
     view! {
         aside(class=move || format!("settings-panel {}", if state.panel.get() == Panel::Settings { "visible" } else { "" }), role="dialog", aria-modal="true", aria-hidden=move || (state.panel.get() != Panel::Settings).to_string(), aria-label="설정") {
             div(class="panel-header") {
@@ -1844,9 +2106,17 @@ fn SettingsPanel() -> View {
                         section(class="setting-section conversation-tools") {
                             h3 { "현재 대화" }
                             div(class="tool-row") {
-                                button(on:click=move |_| state.toggle_pin()) { (icon("pin")) "고정 전환" }
+                                button(disabled=move || !state.storage_writable.get(), on:click=move |_| state.toggle_pin()) { (icon("pin")) "고정 전환" }
                                 button(on:click=move |_| state.export_current()) { (icon("export")) "Markdown 내보내기" }
-                                button(class="danger", disabled=state.is_running, on:click=move |_| state.delete_conversation()) { (icon("trash")) "삭제" }
+                                button(
+                                    class="danger",
+                                    disabled=move || {
+                                        state.is_running.get()
+                                            || state.persistence_busy.get()
+                                            || !state.storage_writable.get()
+                                    },
+                                    on:click=move |_| state.delete_conversation(active_conversation_id.get_clone())
+                                ) { (icon("trash")) "삭제" }
                             }
                         }
                     }
@@ -1875,6 +2145,7 @@ fn ThemeButton(props: ThemeButtonProps) -> View {
     view! {
         button(
             class=move || if selected.get() { "active" } else { "" },
+            disabled=move || !state.storage_writable.get(),
             on:click=move |_| {
                 update_theme(props.value);
                 state.workspace.update(|workspace| workspace.settings.theme = props.value.into());

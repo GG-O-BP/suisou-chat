@@ -131,6 +131,17 @@ pub fn now_millis() -> u64 {
     js_sys::Date::now() as u64
 }
 
+pub fn remove_conversation(workspace: &mut Workspace, id: &str) -> bool {
+    if id.is_empty() {
+        return false;
+    }
+    let previous_len = workspace.conversations.len();
+    workspace
+        .conversations
+        .retain(|conversation| conversation.id != id);
+    workspace.conversations.len() != previous_len
+}
+
 pub fn title_from_question(question: &str) -> String {
     let normalized = question.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = normalized.chars();
@@ -170,5 +181,51 @@ mod tests {
         );
         assert_eq!(title_from_question(" \n\t "), "새 대화");
         assert!(title_from_question(&"가".repeat(100)).chars().count() <= 43);
+    }
+
+    #[test]
+    fn conversation_removal_preserves_unrelated_history_order() {
+        let mut workspace = Workspace {
+            conversations: vec![
+                Conversation {
+                    id: "first".into(),
+                    ..Conversation::default()
+                },
+                Conversation {
+                    id: "remove".into(),
+                    ..Conversation::default()
+                },
+                Conversation {
+                    id: "last".into(),
+                    ..Conversation::default()
+                },
+            ],
+            ..Workspace::default()
+        };
+
+        assert!(remove_conversation(&mut workspace, "remove"));
+        assert_eq!(
+            workspace
+                .conversations
+                .iter()
+                .map(|conversation| conversation.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "last"]
+        );
+    }
+
+    #[test]
+    fn conversation_removal_is_a_noop_for_empty_or_unknown_ids() {
+        let mut workspace = Workspace {
+            conversations: vec![Conversation {
+                id: "kept".into(),
+                ..Conversation::default()
+            }],
+            ..Workspace::default()
+        };
+
+        assert!(!remove_conversation(&mut workspace, ""));
+        assert!(!remove_conversation(&mut workspace, "missing"));
+        assert_eq!(workspace.conversations[0].id, "kept");
     }
 }

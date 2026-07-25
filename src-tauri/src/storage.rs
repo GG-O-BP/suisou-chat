@@ -169,6 +169,35 @@ mod tests {
     }
 
     #[test]
+    fn later_saves_replace_the_workspace_and_refresh_the_backup() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("workspace.json");
+        let first = Workspace {
+            revision: 1,
+            conversations: vec![Conversation {
+                id: "kept-first".into(),
+                ..Conversation::default()
+            }],
+            ..Workspace::default()
+        };
+        save_workspace(&path, &first).unwrap();
+
+        let second = Workspace {
+            revision: 2,
+            conversations: vec![Conversation {
+                id: "kept-second".into(),
+                ..Conversation::default()
+            }],
+            ..Workspace::default()
+        };
+        save_workspace(&path, &second).unwrap();
+
+        let loaded = load_workspace(&path);
+        assert_eq!(loaded.workspace, second);
+        assert_eq!(read_valid_workspace(&backup_path(&path)).unwrap(), second);
+    }
+
+    #[test]
     fn recovers_valid_backup_when_primary_is_corrupt() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("workspace.json");
