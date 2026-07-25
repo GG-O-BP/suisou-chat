@@ -936,25 +936,37 @@ fn select_value(event: Event) -> Option<String> {
 fn stage_index(stage: &str) -> i32 {
     match stage {
         "connecting" => 0,
-        "searching" => 1,
+        "searching" | "creating" => 1,
         "reasoning" => 2,
         "writing" | "done" => 3,
         _ => -1,
     }
 }
 
-fn stage_label(stage: &str) -> &'static str {
-    match stage {
-        "connecting" => "Sakana에 연결 중",
-        "searching" => "웹 자료를 찾는 중",
-        "reasoning" => "출처를 비교하는 중",
-        "writing" => "답변을 작성하는 중",
-        "cancelled" => "중단됨",
+fn stage_label(stage: &str, mode: &str) -> &'static str {
+    match (stage, mode) {
+        ("creating", _) => "아이디어를 빚는 중",
+        ("reasoning", "create") => "구성과 목소리를 다듬는 중",
+        ("writing", "create") => "창작물을 쓰는 중",
+        ("done", "create") => "창작 완료",
+        ("connecting", _) => "Sakana에 연결 중",
+        ("searching", _) => "웹 자료를 찾는 중",
+        ("reasoning", _) => "출처를 비교하는 중",
+        ("writing", _) => "답변을 작성하는 중",
+        ("cancelled", _) => "중단됨",
         _ => "답변 준비 중",
     }
 }
 
-fn stage_depth(stage: &str) -> i32 {
+fn stage_depth(stage: &str, mode: &str) -> i32 {
+    if mode == "create" {
+        return match stage {
+            "connecting" => 120,
+            "creating" | "reasoning" => 360,
+            "writing" | "done" => 720,
+            _ => 0,
+        };
+    }
     match stage {
         "connecting" => 120,
         "searching" => 480,
@@ -968,6 +980,7 @@ fn mode_depth(mode: &str) -> &'static str {
     match mode {
         "quick" => "SURFACE · 40 M",
         "deep" => "ABYSS · 1,880 M",
+        "create" => "ATELIER · 720 M",
         _ => "REEF · 480 M",
     }
 }
@@ -1445,7 +1458,7 @@ fn Welcome() -> View {
             }
             div(class="suggestion-deck") {
                 div(class="suggestion-heading") {
-                    span { "01—03" }
+                    span { "01—04" }
                     p { "예시 질문을 고르거나 직접 입력해 보세요" }
                 }
                 div(class="suggestion-grid") {
@@ -1455,7 +1468,8 @@ fn Welcome() -> View {
                         title="이번 주의 흐름",
                         description="AI 에이전트 주요 발표 교차 검증",
                         icon_name="globe",
-                        tone="coral"
+                        tone="coral",
+                        mode=""
                     )
                     SuggestionButton(
                         value="한국과 일본의 생성형 AI 정책을 공식 자료 중심으로 비교해 줘",
@@ -1463,7 +1477,8 @@ fn Welcome() -> View {
                         title="정책 비교",
                         description="공식 자료의 차이와 공통점",
                         icon_name="deep",
-                        tone="blue"
+                        tone="blue",
+                        mode=""
                     )
                     SuggestionButton(
                         value="이 주장의 찬반 근거를 찾아 신뢰도와 한계를 표로 정리해 줘: ",
@@ -1471,7 +1486,17 @@ fn Welcome() -> View {
                         title="주장 검증",
                         description="찬반 근거와 신뢰도 평가",
                         icon_name="search",
-                        tone="gold"
+                        tone="gold",
+                        mode=""
+                    )
+                    SuggestionButton(
+                        value="늦은 밤 수족관을 배경으로, 오랜 친구 둘이 숨겨 둔 진심을 처음 꺼내는 짧은 대화 장면을 써 줘",
+                        index="04",
+                        title="장면과 대사",
+                        description="분위기 있는 창작 장면 만들기",
+                        icon_name="create",
+                        tone="violet",
+                        mode="create"
                     )
                 }
             }
@@ -1488,13 +1513,20 @@ struct SuggestionButtonProps {
     description: &'static str,
     icon_name: &'static str,
     tone: &'static str,
+    mode: &'static str,
 }
 
 #[component]
 fn SuggestionButton(props: SuggestionButtonProps) -> View {
     let state = use_context::<AppState>();
     view! {
-        button(on:click=move |_| state.composer.set(props.value.into())) {
+        button(on:click=move |_| {
+            if !props.mode.is_empty() {
+                state.workspace.update(|workspace| workspace.settings.last_mode = props.mode.into());
+                state.persist_workspace();
+            }
+            state.composer.set(props.value.into());
+        }) {
             span(class="suggestion-index") { (props.index) }
             span(class=format!("suggestion-icon {}", props.tone)) { (icon(props.icon_name)) }
             span { strong { (props.title) } small { (props.description) } }
@@ -1604,6 +1636,12 @@ fn AnswerFooter(props: AnswerFooterProps) -> View {
 #[component]
 fn StreamingMessage() -> View {
     let state = use_context::<AppState>();
+    let selected_mode = create_memo(move || {
+        state
+            .workspace
+            .with(|workspace| workspace.settings.last_mode.clone())
+    });
+    let is_creative = create_selector(move || selected_mode.get_clone() == "create");
     let stage_progress = create_selector(move || stage_index(&state.stage.get_clone()));
     let stage_percent =
         create_selector(move || ((stage_index(&state.stage.get_clone()) + 1) * 25).max(0));
@@ -1614,7 +1652,7 @@ fn StreamingMessage() -> View {
                     div(class="message-meta") {
                         span(class="role-mark sonar") { span {} }
                         strong { "Sakana Fugu" }
-                        span(class="research-stage") { (move || stage_label(&state.stage.get_clone())) }
+                        span(class="research-stage") { (move || stage_label(&state.stage.get_clone(), &selected_mode.get_clone())) }
                     }
                     (if state.streamed_text.with(String::is_empty) {
                         view! {
@@ -1629,7 +1667,7 @@ fn StreamingMessage() -> View {
                                 div(class="dive-telemetry") {
                                     div {
                                         small { "LIVE DEPTH" }
-                                        strong { (move || format!("{:04} M", stage_depth(&state.stage.get_clone()))) }
+                                        strong { (move || format!("{:04} M", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
                                     }
                                     span(class="telemetry-signal") { "● SIGNAL STABLE" }
                                 }
@@ -1637,7 +1675,7 @@ fn StreamingMessage() -> View {
                                     span(class="depth-line") {}
                                     span(class="depth-fill") {}
                                     span(class="depth-capsule") { (icon("deep")) }
-                                    span(class="depth-reading") { (move || format!("{}m", stage_depth(&state.stage.get_clone()))) }
+                                    span(class="depth-reading") { (move || format!("{}m", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
                                 }
                                 div(class="progress-steps") {
                                     ProgressStep(
@@ -1649,22 +1687,22 @@ fn StreamingMessage() -> View {
                                     )
                                     ProgressStep(
                                         index="02",
-                                        code="SONAR",
-                                        label="웹 자료 검색",
+                                        code=if is_creative.get() { "SPARK" } else { "SONAR" },
+                                        label=if is_creative.get() { "아이디어 발상" } else { "웹 자료 검색" },
                                         active=MaybeDyn::from(move || stage_progress.get() >= 1),
-                                        current=MaybeDyn::from(move || state.stage.get_clone() == "searching")
+                                        current=MaybeDyn::from(move || matches!(state.stage.get_clone().as_str(), "searching" | "creating"))
                                     )
                                     ProgressStep(
                                         index="03",
-                                        code="CURRENT",
-                                        label="출처 비교",
+                                        code=if is_creative.get() { "FORM" } else { "CURRENT" },
+                                        label=if is_creative.get() { "구성과 목소리" } else { "출처 비교" },
                                         active=MaybeDyn::from(move || stage_progress.get() >= 2),
                                         current=MaybeDyn::from(move || state.stage.get_clone() == "reasoning")
                                     )
                                     ProgressStep(
                                         index="04",
-                                        code="LIGHT",
-                                        label="답변 작성",
+                                        code=if is_creative.get() { "INK" } else { "LIGHT" },
+                                        label=if is_creative.get() { "창작물 작성" } else { "답변 작성" },
                                         active=MaybeDyn::from(move || stage_progress.get() >= 3),
                                         current=MaybeDyn::from(move || state.stage.get_clone() == "writing")
                                     )
@@ -1675,7 +1713,7 @@ fn StreamingMessage() -> View {
                         view! {
                             div(class="stream-reading-label") {
                                 span { "FINDINGS ILLUMINATING" }
-                                span { (move || format!("{:04} M", stage_depth(&state.stage.get_clone()))) }
+                                span { (move || format!("{:04} M", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
                             }
                             (move || {
                                 let html = render_streaming_markdown(&state.streamed_text.get_clone());
@@ -1826,9 +1864,9 @@ fn Composer() -> View {
                         span(class="mobile-dive-signal", aria-hidden="true") {}
                         div {
                             small { "LIVE DIVE" }
-                            strong { (move || stage_label(&state.stage.get_clone())) }
+                            strong { (move || stage_label(&state.stage.get_clone(), &selected_mode.get_clone())) }
                         }
-                        span(class="mobile-dive-depth") { (move || format!("{:04} M", stage_depth(&state.stage.get_clone()))) }
+                        span(class="mobile-dive-depth") { (move || format!("{:04} M", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
                         button(
                             r#type="button",
                             class="mobile-stop-button",
@@ -1848,6 +1886,7 @@ fn Composer() -> View {
                     ModeButton(value="quick", index="01", label="빠른 답변", detail="웹 검색 없이", icon_name="spark")
                     ModeButton(value="search", index="02", label="웹 검색", detail="출처와 함께", icon_name="globe")
                     ModeButton(value="deep", index="03", label="심층 조사", detail="넓고 깊게", icon_name="deep")
+                    ModeButton(value="create", index="04", label="창작", detail="글·대사·아이디어", icon_name="create")
                 }
                 div(class="capsule-depth", aria-live="polite") {
                     small { "DIVE PROFILE" }
@@ -1857,7 +1896,7 @@ fn Composer() -> View {
             div(class="composer") {
                 div(class="capsule-seal", aria-hidden="true") {
                     span {}
-                    "RESEARCH CAPSULE"
+                    (move || if selected_mode.get_clone() == "create" { "CREATIVE CAPSULE" } else { "RESEARCH CAPSULE" })
                     span {}
                 }
                 label(class="sr-only", r#for="question-input") { "질문 입력" }
@@ -1866,7 +1905,7 @@ fn Composer() -> View {
                     id="question-input",
                     bind:value=state.composer,
                     on:keydown=keydown,
-                    placeholder="무엇을 깊이 알아볼까요?",
+                    placeholder=move || if selected_mode.get_clone() == "create" { "어떤 이야기를 함께 만들어 볼까요?" } else { "무엇을 깊이 알아볼까요?" },
                     rows="1",
                     maxlength="20000",
                     disabled=move || state.is_running.get() || !state.storage_writable.get()
@@ -1917,6 +1956,9 @@ fn Composer() -> View {
                     }
                     _ if !state.storage_writable.get() => {
                         "저장된 대화를 복구해야 해서 현재 읽기 전용입니다. 새 질문을 보내거나 기록을 저장할 수 없습니다."
+                    }
+                    _ if selected_mode.get_clone() == "create" => {
+                        "Enter로 전송 · Shift+Enter로 줄바꿈 · 장르, 분위기, 길이, 독자를 알려주면 더 정교하게 만들 수 있어요"
                     }
                     _ => {
                         "Enter로 전송 · Shift+Enter로 줄바꿈 · 출처는 반드시 원문에서 다시 확인하세요"
@@ -1981,7 +2023,7 @@ fn SourcesPanel() -> View {
                     div(class="sources-empty") {
                         span(class="source-rings") { (icon("sources")) }
                         h3 { "아직 출처가 없습니다" }
-                        p { "웹 검색이나 심층 조사로 질문하면 Sakana Fugu가 참고한 자료를 여기에 모아 보여 줍니다." }
+                        p { "웹 검색이나 심층 조사로 질문하면 Sakana Fugu가 참고한 자료를 여기에 모아 보여 줍니다. 빠른 답변과 창작 모드는 웹을 검색하지 않습니다." }
                     }
                 }
             } else {

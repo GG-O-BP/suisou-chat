@@ -1856,7 +1856,7 @@ svg {
 
   .mode-tabs {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     width: calc(100% - 1rem);
   }
 
@@ -2985,7 +2985,7 @@ body {
 .mode-tabs {
   display: grid;
   flex: 1;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   margin: 0;
   padding: 0;
@@ -3196,6 +3196,25 @@ body {
 
 .composer-wrap.mode-deep .capsule-depth strong {
   color: var(--specimen);
+}
+
+.composer-wrap.mode-create .mode-tabs button.active::after,
+.composer-wrap.mode-create .capsule-seal span {
+  background: #9f7ed8;
+}
+
+.composer-wrap.mode-create .capsule-depth strong,
+.composer-wrap.mode-create .mode-tabs button.active .mode-icon {
+  color: #7653b0;
+}
+
+.composer-wrap.mode-create .mode-tabs button.active {
+  background: linear-gradient(180deg, transparent, rgba(159, 126, 216, 0.12));
+}
+
+:root[data-theme="dark"] .composer-wrap.mode-create .capsule-depth strong,
+:root[data-theme="dark"] .composer-wrap.mode-create .mode-tabs button.active .mode-icon {
+  color: #c9aef3;
 }
 
 .composer-wrap.read-only {
@@ -3421,7 +3440,7 @@ body {
   }
 
   .suggestion-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
   }
 
   .suggestion-grid button {
@@ -3790,7 +3809,7 @@ body {
 
   .mode-tabs {
     width: 100%;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     border-top: 1px solid var(--line-strong);
   }
 

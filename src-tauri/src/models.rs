@@ -165,9 +165,9 @@ pub fn validate_workspace(workspace: &Workspace) -> Result<(), String> {
     }
     if !matches!(
         workspace.settings.last_mode.as_str(),
-        "quick" | "search" | "deep"
+        "quick" | "search" | "deep" | "create"
     ) {
-        return Err("지원하지 않는 연구 모드입니다.".into());
+        return Err("지원하지 않는 답변 모드입니다.".into());
     }
 
     let mut total_messages = 0usize;
@@ -216,8 +216,11 @@ pub fn validate_research_request(request: &ResearchRequest) -> Result<(), String
     ) {
         return Err("지원하지 않는 Fugu 모델입니다.".into());
     }
-    if !matches!(request.mode.as_str(), "quick" | "search" | "deep") {
-        return Err("지원하지 않는 연구 모드입니다.".into());
+    if !matches!(
+        request.mode.as_str(),
+        "quick" | "search" | "deep" | "create"
+    ) {
+        return Err("지원하지 않는 답변 모드입니다.".into());
     }
     if !matches!(request.reasoning.as_str(), "high" | "xhigh" | "max") {
         return Err("지원하지 않는 추론 강도입니다.".into());
@@ -265,6 +268,10 @@ mod tests {
     #[test]
     fn accepts_supported_research_request() {
         assert!(validate_research_request(&request()).is_ok());
+
+        let mut creative = request();
+        creative.mode = "create".into();
+        assert!(validate_research_request(&creative).is_ok());
     }
 
     #[test]

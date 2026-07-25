@@ -44,6 +44,9 @@ pub fn icon(name: &str) -> View {
         "deep" => {
             view! { svg(viewBox="0 0 24 24", aria-hidden="true") { path(d="M12 3v14m0 0-4-4m4 4 4-4M5 6h14M7 20h10") } }
         }
+        "create" => {
+            view! { svg(viewBox="0 0 24 24", aria-hidden="true") { path(d="M4 20c3.5-1 6.2-3 8.3-6.1L19 4l1 1-9.9 6.7C7 13.8 5 16.5 4 20Z") path(d="m14.5 7.5 2 2M7.5 16.5l-2-2") } }
+        }
         "key" => {
             view! { svg(viewBox="0 0 24 24", aria-hidden="true") { circle(cx="8", cy="12", r="4") path(d="M12 12h9m-3 0v3m-3-3v2") } }
         }
