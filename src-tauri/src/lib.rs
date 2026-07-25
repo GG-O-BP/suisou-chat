@@ -8,13 +8,13 @@ use models::{
     BootstrapResponse, ConnectionInfo, Conversation, ResearchRequest, ResearchResponse, Workspace,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 struct AppState {
-    fugu: FuguRuntime,
+    fugu: Arc<FuguRuntime>,
     workspace_path: PathBuf,
     export_dir: PathBuf,
     save_lock: Mutex<()>,
@@ -67,8 +67,8 @@ async fn connect_api_key(
 }
 
 #[tauri::command]
-fn clear_api_key(state: State<'_, AppState>) -> Result<(), String> {
-    state.fugu.clear_key()
+async fn clear_api_key(state: State<'_, AppState>) -> Result<(), String> {
+    state.fugu.clear_key().await
 }
 
 #[tauri::command]
@@ -157,7 +157,7 @@ pub fn run() {
                 .document_dir()
                 .unwrap_or_else(|_| data_dir.clone());
             app.manage(AppState {
-                fugu: FuguRuntime::new()?,
+                fugu: Arc::new(FuguRuntime::new()?),
                 workspace_path: data_dir.join("workspace.json"),
                 export_dir: documents_dir.join("Suisou"),
                 save_lock: Mutex::new(()),

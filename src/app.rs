@@ -1137,6 +1137,12 @@ fn connect_key(
     let api_key = key_input.get_clone();
     key_input.set(String::new());
     key_busy.set(true);
+    show_toast(
+        "API 키 확인 후 운영체제 보안 저장소의 잠금 해제 창이 나타나면 완료해 주세요.".into(),
+        "info",
+        toast,
+        toast_kind,
+    );
     spawn_local_scoped(async move {
         let result =
             ipc::command::<_, ConnectionInfo>("connect_api_key", &ApiKeyArgs { api_key }).await;

@@ -16,9 +16,12 @@ use zeroize::Zeroizing;
 
 const API_ROOT: &str = "https://api.sakana.ai/v1";
 const RESEARCH_EVENT: &str = "research-event";
+const KEY_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_ANSWER_BYTES: usize = 4 * 1024 * 1024;
+const CREDENTIAL_TASK_FAILED: &str =
+    "API 키 보안 저장소 작업이 예기치 않게 중단되었습니다. 앱을 다시 시작한 뒤 시도해 주세요.";
 
 pub struct FuguRuntime {
     client: Client,
@@ -103,11 +106,25 @@ impl FuguRuntime {
             .and_then(|notice| notice.clone())
     }
 
-    pub async fn connect(&self, key: String) -> Result<ConnectionInfo, String> {
+    pub async fn connect(self: &Arc<Self>, key: String) -> Result<ConnectionInfo, String> {
         let key = normalize_key(key)?;
         let connection = self.verify_key(key.as_str()).await?;
-        self.store_key(key)?;
+        self.store_key_async(key).await?;
         Ok(connection)
+    }
+
+    async fn store_key_async(self: &Arc<Self>, key: Zeroizing<String>) -> Result<(), String> {
+        // Linux Secret Service exposes a synchronous API that internally calls
+        // `block_on`. Running it on a Tokio worker would nest runtimes and panic.
+        let runtime = Arc::clone(self);
+        match tokio::task::spawn_blocking(move || runtime.store_key(key)).await {
+            Ok(result) => result,
+            Err(_) => {
+                let error = CREDENTIAL_TASK_FAILED.to_string();
+                self.set_credential_notice(Some(error.clone()));
+                Err(error)
+            }
+        }
     }
 
     fn store_key(&self, key: Zeroizing<String>) -> Result<(), String> {
@@ -128,7 +145,20 @@ impl FuguRuntime {
         Ok(())
     }
 
-    pub fn clear_key(&self) -> Result<(), String> {
+    pub async fn clear_key(self: &Arc<Self>) -> Result<(), String> {
+        // Deletion can use the same blocking Secret Service facade as saving.
+        let runtime = Arc::clone(self);
+        match tokio::task::spawn_blocking(move || runtime.clear_key_blocking()).await {
+            Ok(result) => result,
+            Err(_) => {
+                let error = CREDENTIAL_TASK_FAILED.to_string();
+                self.set_credential_notice(Some(error.clone()));
+                Err(error)
+            }
+        }
+    }
+
+    fn clear_key_blocking(&self) -> Result<(), String> {
         let _update = self
             .key_update
             .lock()
@@ -190,9 +220,10 @@ impl FuguRuntime {
             .client
             .get(format!("{API_ROOT}/models"))
             .bearer_auth(key)
+            .timeout(KEY_VERIFICATION_TIMEOUT)
             .send()
             .await
-            .map_err(network_error)?;
+            .map_err(key_verification_network_error)?;
         if !response.status().is_success() {
             return Err(http_error(response).await);
         }
@@ -202,7 +233,7 @@ impl FuguRuntime {
         let bytes = response
             .bytes()
             .await
-            .map_err(|_| "모델 목록 응답을 읽지 못했습니다.".to_string())?;
+            .map_err(key_verification_network_error)?;
         if bytes.len() > MAX_RESPONSE_BYTES {
             return Err("모델 목록 응답이 안전한 크기 제한을 초과했습니다.".into());
         }
@@ -694,6 +725,14 @@ fn network_error(error: reqwest::Error) -> String {
     }
 }
 
+fn key_verification_network_error(error: reqwest::Error) -> String {
+    if error.is_timeout() {
+        "API 키 확인 시간이 초과되었습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.".into()
+    } else {
+        network_error(error)
+    }
+}
+
 async fn http_error(response: reqwest::Response) -> String {
     let status = response.status();
     let retry_after = response
@@ -783,6 +822,34 @@ mod tests {
         fail_load: AtomicBool,
         fail_save: AtomicBool,
         fail_delete: AtomicBool,
+    }
+
+    struct RuntimeStartingApiKeyStore {
+        value: Mutex<Option<String>>,
+    }
+
+    impl RuntimeStartingApiKeyStore {
+        fn run_nested_runtime() {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {});
+        }
+    }
+
+    impl ApiKeyStore for RuntimeStartingApiKeyStore {
+        fn load(&self) -> Result<Option<Zeroizing<String>>, String> {
+            Ok(self.value.lock().unwrap().clone().map(Zeroizing::new))
+        }
+
+        fn save(&self, api_key: &str) -> Result<(), String> {
+            Self::run_nested_runtime();
+            *self.value.lock().unwrap() = Some(api_key.to_owned());
+            Ok(())
+        }
+
+        fn delete(&self) -> Result<(), String> {
+            Self::run_nested_runtime();
+            *self.value.lock().unwrap() = None;
+            Ok(())
+        }
     }
 
     impl MemoryApiKeyStore {
@@ -932,7 +999,7 @@ mod tests {
         let runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
         store.fail_delete.store(true, Ordering::SeqCst);
 
-        assert_eq!(runtime.clear_key().unwrap_err(), "delete failed");
+        assert_eq!(runtime.clear_key_blocking().unwrap_err(), "delete failed");
         assert!(!runtime.has_key());
         assert_eq!(store.value().as_deref(), Some("persisted-key-123"));
         assert_eq!(
@@ -966,10 +1033,31 @@ mod tests {
             restored_runtime.key().unwrap().as_str(),
             "round-trip-key-123"
         );
-        restored_runtime.clear_key().unwrap();
+        restored_runtime.clear_key_blocking().unwrap();
         drop(restored_runtime);
 
         let cleared_runtime = FuguRuntime::new_with_store(store, None).unwrap();
         assert!(!cleared_runtime.has_key());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn secure_store_operations_do_not_nest_tokio_runtimes() {
+        let store = Arc::new(RuntimeStartingApiKeyStore {
+            value: Mutex::new(None),
+        });
+        let runtime = Arc::new(FuguRuntime::new_with_store(store.clone(), None).unwrap());
+
+        runtime
+            .store_key_async(Zeroizing::new("runtime-safe-key-123".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.value.lock().unwrap().as_deref(),
+            Some("runtime-safe-key-123")
+        );
+
+        runtime.clear_key().await.unwrap();
+        assert_eq!(*store.value.lock().unwrap(), None);
+        assert!(!runtime.has_key());
     }
 }
