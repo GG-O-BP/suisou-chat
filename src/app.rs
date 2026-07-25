@@ -9,6 +9,7 @@ use serde::Serialize;
 use sycamore::futures::spawn_local_scoped;
 use sycamore::prelude::*;
 use sycamore::web::events::{Event, KeyboardEvent, SubmitEvent};
+use sycamore::web::{Suspense, Transition};
 use wasm_bindgen::JsCast;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -17,6 +18,465 @@ enum Panel {
     Sidebar,
     Sources,
     Settings,
+}
+
+#[derive(Clone, Copy)]
+struct AppState {
+    workspace: Signal<Workspace>,
+    active_id: Signal<String>,
+    composer: Signal<String>,
+    search_query: Signal<String>,
+    selected_sources: Signal<Vec<Source>>,
+    panel: Signal<Panel>,
+    is_loading: Signal<bool>,
+    is_running: Signal<bool>,
+    active_request: Signal<String>,
+    stage: Signal<String>,
+    streamed_text: Signal<String>,
+    key_configured: Signal<bool>,
+    key_input: Signal<String>,
+    key_busy: Signal<bool>,
+    connection_message: Signal<String>,
+    save_state: Signal<String>,
+    last_failed_question: Signal<String>,
+    toast: Signal<String>,
+    toast_kind: Signal<String>,
+    storage_label: Signal<String>,
+    storage_writable: Signal<bool>,
+}
+
+impl AppState {
+    fn new() -> Self {
+        Self {
+            workspace: create_signal(Workspace::default()),
+            active_id: create_signal(String::new()),
+            composer: create_signal(String::new()),
+            search_query: create_signal(String::new()),
+            selected_sources: create_signal(Vec::new()),
+            panel: create_signal(Panel::None),
+            is_loading: create_signal(true),
+            is_running: create_signal(false),
+            active_request: create_signal(String::new()),
+            stage: create_signal(String::new()),
+            streamed_text: create_signal(String::new()),
+            key_configured: create_signal(false),
+            key_input: create_signal(String::new()),
+            key_busy: create_signal(false),
+            connection_message: create_signal(String::new()),
+            save_state: create_signal(String::new()),
+            last_failed_question: create_signal(String::new()),
+            toast: create_signal(String::new()),
+            toast_kind: create_signal(String::from("info")),
+            storage_label: create_signal(String::from("이 기기에만 저장됨")),
+            storage_writable: create_signal(true),
+        }
+    }
+
+    fn show_toast(self, message: impl Into<String>, kind: &str) {
+        let message = message.into();
+        batch(move || {
+            self.toast.set(message);
+            self.toast_kind.set(kind.into());
+        });
+    }
+
+    fn close_panel(self) {
+        self.panel.set(Panel::None);
+    }
+
+    fn persist_workspace(self) {
+        let snapshot = self.workspace.get_clone_untracked();
+        self.save_state.set("saving".into());
+        spawn_local_scoped(async move {
+            match ipc::command::<_, u64>(
+                "save_workspace",
+                &WorkspaceArgs {
+                    workspace: snapshot,
+                },
+            )
+            .await
+            {
+                Ok(revision) => {
+                    batch(move || {
+                        // Revision is persistence metadata and is not rendered. Updating it
+                        // silently avoids invalidating every workspace-derived selector.
+                        self.workspace
+                            .update_silent(|value| value.revision = revision);
+                        self.save_state.set("saved".into());
+                    });
+                }
+                Err(error) => self.save_state.set(format!("error:{error}")),
+            }
+        });
+    }
+
+    fn select_conversation(self, id: String) {
+        let sources = self
+            .workspace
+            .with_untracked(|workspace| source_list(workspace, &id));
+        batch(move || {
+            self.active_id.set(id);
+            self.selected_sources.set(sources);
+            self.close_panel();
+        });
+    }
+
+    fn new_conversation(self) {
+        batch(move || {
+            self.active_id.set(String::new());
+            self.selected_sources.set(Vec::new());
+            self.composer.set(String::new());
+            self.close_panel();
+        });
+    }
+
+    fn delete_conversation(self) {
+        let id = self.active_id.get_clone_untracked();
+        if id.is_empty() {
+            return;
+        }
+        batch(move || {
+            self.workspace.update(|value| {
+                value
+                    .conversations
+                    .retain(|conversation| conversation.id != id)
+            });
+            self.active_id.set(String::new());
+            self.selected_sources.set(Vec::new());
+        });
+        self.persist_workspace();
+    }
+
+    fn toggle_pin(self) {
+        let id = self.active_id.get_clone_untracked();
+        self.workspace.update(|value| {
+            if let Some(conversation) = value
+                .conversations
+                .iter_mut()
+                .find(|conversation| conversation.id == id)
+            {
+                conversation.pinned = !conversation.pinned;
+                conversation.updated_at = now_millis();
+            }
+        });
+        self.persist_workspace();
+    }
+
+    fn retry_question(self) {
+        let question = self.last_failed_question.get_clone_untracked();
+        if question.is_empty() {
+            return;
+        }
+        let failed_id = self.active_id.get_clone_untracked();
+        batch(move || {
+            self.composer.set(question);
+            self.workspace.update(|value| {
+                if let Some(conversation) = value
+                    .conversations
+                    .iter_mut()
+                    .find(|conversation| conversation.id == failed_id)
+                {
+                    if matches!(
+                        conversation
+                            .messages
+                            .last()
+                            .map(|message| message.status.as_str()),
+                        Some("failed" | "cancelled")
+                    ) {
+                        conversation.messages.pop();
+                    }
+                    if conversation
+                        .messages
+                        .last()
+                        .is_some_and(|message| message.role == "user")
+                    {
+                        conversation.messages.pop();
+                    }
+                }
+            });
+        });
+        self.persist_workspace();
+        self.send_question();
+    }
+
+    fn send_question(self) {
+        let question = self.composer.get_clone_untracked().trim().to_owned();
+        if question.is_empty() || self.is_running.get_untracked() {
+            return;
+        }
+        if question.chars().count() > 20_000 {
+            self.show_toast("질문은 20,000자 이하로 입력해 주세요.", "error");
+            return;
+        }
+        if !self.key_configured.get_untracked() {
+            self.panel.set(Panel::Settings);
+            self.show_toast("먼저 설정에서 Sakana API 키를 연결해 주세요.", "warning");
+            return;
+        }
+
+        let active_id = self.active_id.get_clone_untracked();
+        let (prior_messages, prior_chars) = self.workspace.with_untracked(|workspace| {
+            current_conversation_ref(workspace, &active_id).map_or((0, 0), |conversation| {
+                (
+                    conversation.messages.len(),
+                    conversation
+                        .messages
+                        .iter()
+                        .map(|message| message.content.chars().count())
+                        .sum(),
+                )
+            })
+        });
+        if prior_messages >= 199 || prior_chars.saturating_add(question.chars().count()) > 500_000 {
+            self.show_toast(
+                "대화 문맥 한도에 도달했습니다. 새 탐구에서 질문을 이어가 주세요.",
+                "warning",
+            );
+            return;
+        }
+
+        let timestamp = now_millis();
+        let conversation_id = if active_id.is_empty() {
+            let id = new_id("conversation");
+            let id_for_workspace = id.clone();
+            self.workspace.update(|value| {
+                value.conversations.push(Conversation {
+                    id: id_for_workspace,
+                    title: title_from_question(&question),
+                    pinned: false,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    messages: Vec::new(),
+                });
+            });
+            self.active_id.set(id.clone());
+            id
+        } else {
+            active_id
+        };
+
+        self.workspace.update(|value| {
+            if let Some(conversation) = value
+                .conversations
+                .iter_mut()
+                .find(|conversation| conversation.id == conversation_id)
+            {
+                conversation.updated_at = timestamp;
+                conversation.messages.push(Message {
+                    id: new_id("message"),
+                    role: "user".into(),
+                    content: question.clone(),
+                    created_at: timestamp,
+                    status: "complete".into(),
+                    sources: Vec::new(),
+                    usage: None,
+                });
+            }
+        });
+
+        let request_id = new_id("request");
+        let active_request_id = request_id.clone();
+        batch(move || {
+            self.composer.set(String::new());
+            self.last_failed_question.set(String::new());
+            self.streamed_text.set(String::new());
+            self.selected_sources.set(Vec::new());
+            self.stage.set("connecting".into());
+            self.is_running.set(true);
+            self.active_request.set(active_request_id);
+        });
+        self.persist_workspace();
+
+        let request = self.workspace.with_untracked(|workspace| {
+            let conversation = current_conversation_ref(workspace, &conversation_id)
+                .cloned()
+                .unwrap_or_default();
+            ResearchRequest {
+                request_id: request_id.clone(),
+                model: workspace.settings.model.clone(),
+                mode: workspace.settings.last_mode.clone(),
+                reasoning: workspace.settings.reasoning.clone(),
+                messages: conversation
+                    .messages
+                    .iter()
+                    .map(|message| InputMessage {
+                        role: message.role.clone(),
+                        content: message.content.clone(),
+                    })
+                    .collect(),
+            }
+        });
+
+        spawn_local_scoped(async move {
+            let result =
+                ipc::command::<_, ResearchResponse>("run_research", &ResearchArgs { request })
+                    .await;
+            if self.active_request.get_clone_untracked() != request_id {
+                return;
+            }
+            batch(move || {
+                self.is_running.set(false);
+                self.active_request.set(String::new());
+            });
+            match result {
+                Ok(response) => {
+                    self.workspace.update(|value| {
+                        if let Some(conversation) = value
+                            .conversations
+                            .iter_mut()
+                            .find(|conversation| conversation.id == conversation_id)
+                        {
+                            conversation.updated_at = now_millis();
+                            conversation.messages.push(Message {
+                                id: new_id("message"),
+                                role: "assistant".into(),
+                                content: response.answer,
+                                created_at: now_millis(),
+                                status: "complete".into(),
+                                sources: response.sources.clone(),
+                                usage: response.usage,
+                            });
+                        }
+                    });
+                    batch(move || {
+                        self.selected_sources.set(response.sources);
+                        self.streamed_text.set(String::new());
+                        self.stage.set("done".into());
+                    });
+                    self.persist_workspace();
+                }
+                Err(error) => {
+                    let partial = self.streamed_text.get_clone_untracked();
+                    let status = if error.contains("중단") {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    if !partial.trim().is_empty() {
+                        self.workspace.update(|value| {
+                            if let Some(conversation) = value
+                                .conversations
+                                .iter_mut()
+                                .find(|conversation| conversation.id == conversation_id)
+                            {
+                                conversation.updated_at = now_millis();
+                                conversation.messages.push(Message {
+                                    id: new_id("message"),
+                                    role: "assistant".into(),
+                                    content: partial,
+                                    created_at: now_millis(),
+                                    status: status.into(),
+                                    sources: Vec::new(),
+                                    usage: None,
+                                });
+                            }
+                        });
+                        self.persist_workspace();
+                    }
+                    batch(move || {
+                        self.stage.set(status.into());
+                        self.streamed_text.set(String::new());
+                        self.last_failed_question.set(question);
+                    });
+                    let mut error = error;
+                    if error.contains("인증") || error.contains("API 키") {
+                        if let Err(clear_error) =
+                            ipc::command_unit("clear_api_key", &EmptyArgs {}).await
+                        {
+                            error = format!("{error} {clear_error}");
+                            let _ = ipc::command_unit("forget_api_key", &EmptyArgs {}).await;
+                        }
+                        batch(move || {
+                            self.key_configured.set(false);
+                            self.panel.set(Panel::Settings);
+                        });
+                    }
+                    self.show_toast(error, "error");
+                }
+            }
+        });
+    }
+
+    fn cancel_request(self) {
+        let request_id = self.active_request.get_clone_untracked();
+        spawn_local_scoped(async move {
+            match ipc::command::<_, bool>("cancel_research", &RequestIdArgs { request_id }).await {
+                Ok(true) => self.show_toast("답변 생성을 중단했습니다.", "info"),
+                Ok(false) => self.show_toast("이미 완료된 요청입니다.", "info"),
+                Err(error) => self.show_toast(error, "error"),
+            }
+        });
+    }
+
+    fn connect_key(self) {
+        let api_key = self.key_input.take();
+        batch(move || {
+            self.key_busy.set(true);
+            self.show_toast(
+                "API 키 확인 후 운영체제 보안 저장소의 잠금 해제 창이 나타나면 완료해 주세요.",
+                "info",
+            );
+        });
+        spawn_local_scoped(async move {
+            let result =
+                ipc::command::<_, ConnectionInfo>("connect_api_key", &ApiKeyArgs { api_key }).await;
+            self.key_busy.set(false);
+            match result {
+                Ok(info) => {
+                    let model_note = if info.models.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}개 Fugu 모델", info.models.len())
+                    };
+                    batch(move || {
+                        self.key_configured.set(true);
+                        self.connection_message
+                            .set(format!("{}{model_note}", info.message));
+                    });
+                    self.show_toast(
+                        "Sakana API 연결을 확인하고 키를 안전하게 저장했습니다.",
+                        "success",
+                    );
+                }
+                Err(error) => self.show_toast(error, "error"),
+            }
+        });
+    }
+
+    fn clear_key(self) {
+        spawn_local_scoped(async move {
+            let result = ipc::command_unit("clear_api_key", &EmptyArgs {}).await;
+            batch(move || {
+                self.key_configured.set(false);
+                self.connection_message.set(String::new());
+            });
+            match result {
+                Ok(()) => self.show_toast(
+                    "API 키를 메모리와 운영체제 보안 저장소에서 제거했습니다.",
+                    "success",
+                ),
+                Err(error) => self.show_toast(error, "error"),
+            }
+        });
+    }
+
+    fn export_current(self) {
+        let active_id = self.active_id.get_clone_untracked();
+        let conversation = self
+            .workspace
+            .with_untracked(|workspace| current_conversation_ref(workspace, &active_id).cloned());
+        let Some(conversation) = conversation else {
+            return;
+        };
+        spawn_local_scoped(async move {
+            match ipc::command::<_, String>("export_conversation", &ExportArgs { conversation })
+                .await
+            {
+                Ok(_) => self.show_toast("Markdown 파일로 내보냈습니다.", "success"),
+                Err(error) => self.show_toast(error, "error"),
+            }
+        });
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -54,32 +514,27 @@ struct ExportArgs {
 #[derive(Clone, Serialize)]
 struct EmptyArgs {}
 
-fn persist_workspace(workspace: Signal<Workspace>, save_state: Signal<String>) {
-    let snapshot = workspace.get_clone();
-    save_state.set("saving".into());
-    spawn_local_scoped(async move {
-        match ipc::command::<_, u64>(
-            "save_workspace",
-            &WorkspaceArgs {
-                workspace: snapshot,
-            },
-        )
-        .await
-        {
-            Ok(revision) => {
-                workspace.update(|value| value.revision = revision);
-                save_state.set("saved".into());
-            }
-            Err(error) => {
-                save_state.set(format!("error:{error}"));
-            }
-        }
-    });
+fn current_conversation_ref<'a>(
+    workspace: &'a Workspace,
+    active_id: &str,
+) -> Option<&'a Conversation> {
+    workspace
+        .conversations
+        .iter()
+        .find(|conversation| conversation.id == active_id)
 }
 
-fn show_toast(message: String, kind: &str, toast: Signal<String>, toast_kind: Signal<String>) {
-    toast.set(message);
-    toast_kind.set(kind.into());
+fn source_list(workspace: &Workspace, active_id: &str) -> Vec<Source> {
+    current_conversation_ref(workspace, active_id)
+        .and_then(|conversation| {
+            conversation
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == "assistant" && !message.sources.is_empty())
+        })
+        .map(|message| message.sources.clone())
+        .unwrap_or_default()
 }
 
 fn update_theme(theme: &str) {
@@ -94,951 +549,38 @@ fn update_theme(theme: &str) {
     }
 }
 
-fn current_conversation(workspace: &Workspace, active_id: &str) -> Option<Conversation> {
-    workspace
-        .conversations
-        .iter()
-        .find(|conversation| conversation.id == active_id)
-        .cloned()
-}
-
-fn source_list(workspace: &Workspace, active_id: &str) -> Vec<Source> {
-    current_conversation(workspace, active_id)
-        .map(|conversation| {
-            conversation
-                .messages
-                .into_iter()
-                .rev()
-                .find(|message| message.role == "assistant" && !message.sources.is_empty())
-                .map(|message| message.sources)
-                .unwrap_or_default()
-        })
-        .unwrap_or_default()
-}
-
-fn set_active_conversation(
-    id: String,
-    active_id: Signal<String>,
-    selected_sources: Signal<Vec<Source>>,
-    panel: Signal<Panel>,
-    workspace: Signal<Workspace>,
-) {
-    active_id.set(id.clone());
-    selected_sources.set(source_list(&workspace.get_clone(), &id));
-    panel.set(Panel::None);
-}
-
-fn new_conversation(
-    active_id: Signal<String>,
-    selected_sources: Signal<Vec<Source>>,
-    composer: Signal<String>,
-    panel: Signal<Panel>,
-) {
-    active_id.set(String::new());
-    selected_sources.set(Vec::new());
-    composer.set(String::new());
-    panel.set(Panel::None);
-}
-
-fn delete_conversation(
-    active_id: Signal<String>,
-    workspace: Signal<Workspace>,
-    selected_sources: Signal<Vec<Source>>,
-    save_state: Signal<String>,
-) {
-    let id = active_id.get_clone();
-    if id.is_empty() {
-        return;
-    }
-    workspace.update(|value| {
-        value
-            .conversations
-            .retain(|conversation| conversation.id != id)
-    });
-    active_id.set(String::new());
-    selected_sources.set(Vec::new());
-    persist_workspace(workspace, save_state);
-}
-
-fn toggle_pin(active_id: Signal<String>, workspace: Signal<Workspace>, save_state: Signal<String>) {
-    let id = active_id.get_clone();
-    workspace.update(|value| {
-        if let Some(conversation) = value
-            .conversations
-            .iter_mut()
-            .find(|conversation| conversation.id == id)
-        {
-            conversation.pinned = !conversation.pinned;
-            conversation.updated_at = now_millis();
-        }
-    });
-    persist_workspace(workspace, save_state);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn send_question(
-    composer: Signal<String>,
-    active_id: Signal<String>,
-    workspace: Signal<Workspace>,
-    key_configured: Signal<bool>,
-    is_running: Signal<bool>,
-    active_request: Signal<String>,
-    stage: Signal<String>,
-    streamed_text: Signal<String>,
-    selected_sources: Signal<Vec<Source>>,
-    last_failed_question: Signal<String>,
-    save_state: Signal<String>,
-    panel: Signal<Panel>,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) {
-    let question = composer.get_clone().trim().to_owned();
-    if question.is_empty() || is_running.get() {
-        return;
-    }
-    if question.chars().count() > 20_000 {
-        show_toast(
-            "질문은 20,000자 이하로 입력해 주세요.".into(),
-            "error",
-            toast,
-            toast_kind,
-        );
-        return;
-    }
-    if !key_configured.get() {
-        panel.set(Panel::Settings);
-        show_toast(
-            "먼저 설정에서 Sakana API 키를 연결해 주세요.".into(),
-            "warning",
-            toast,
-            toast_kind,
-        );
-        return;
-    }
-    let active = current_conversation(&workspace.get_clone(), &active_id.get_clone());
-    let prior_messages = active
-        .as_ref()
-        .map(|value| value.messages.len())
-        .unwrap_or(0);
-    let prior_chars = active
-        .as_ref()
-        .map(|value| {
-            value
-                .messages
-                .iter()
-                .map(|message| message.content.chars().count())
-                .sum()
-        })
-        .unwrap_or(0usize);
-    if prior_messages >= 199 || prior_chars.saturating_add(question.chars().count()) > 500_000 {
-        show_toast(
-            "대화 문맥 한도에 도달했습니다. 새 탐구에서 질문을 이어가 주세요.".into(),
-            "warning",
-            toast,
-            toast_kind,
-        );
-        return;
-    }
-
-    let timestamp = now_millis();
-    let conversation_id = if active_id.get_clone().is_empty() {
-        let id = new_id("conversation");
-        workspace.update(|value| {
-            value.conversations.push(Conversation {
-                id: id.clone(),
-                title: title_from_question(&question),
-                pinned: false,
-                created_at: timestamp,
-                updated_at: timestamp,
-                messages: Vec::new(),
-            });
-        });
-        active_id.set(id.clone());
-        id
-    } else {
-        active_id.get_clone()
-    };
-
-    workspace.update(|value| {
-        if let Some(conversation) = value
-            .conversations
-            .iter_mut()
-            .find(|conversation| conversation.id == conversation_id)
-        {
-            conversation.updated_at = timestamp;
-            conversation.messages.push(Message {
-                id: new_id("message"),
-                role: "user".into(),
-                content: question.clone(),
-                created_at: timestamp,
-                status: "complete".into(),
-                sources: Vec::new(),
-                usage: None,
-            });
-        }
-    });
-
-    composer.set(String::new());
-    last_failed_question.set(String::new());
-    streamed_text.set(String::new());
-    selected_sources.set(Vec::new());
-    stage.set("connecting".into());
-    is_running.set(true);
-    let request_id = new_id("request");
-    active_request.set(request_id.clone());
-    persist_workspace(workspace, save_state);
-
-    let snapshot = workspace.get_clone();
-    let conversation = current_conversation(&snapshot, &conversation_id).unwrap_or_default();
-    let request = ResearchRequest {
-        request_id: request_id.clone(),
-        model: snapshot.settings.model.clone(),
-        mode: snapshot.settings.last_mode.clone(),
-        reasoning: snapshot.settings.reasoning.clone(),
-        messages: conversation
-            .messages
-            .iter()
-            .map(|message| InputMessage {
-                role: message.role.clone(),
-                content: message.content.clone(),
-            })
-            .collect(),
-    };
-
+fn open_url(state: AppState, url: String) {
     spawn_local_scoped(async move {
-        let result =
-            ipc::command::<_, ResearchResponse>("run_research", &ResearchArgs { request }).await;
-        if active_request.get_clone() != request_id {
-            return;
-        }
-        is_running.set(false);
-        active_request.set(String::new());
-        match result {
-            Ok(response) => {
-                workspace.update(|value| {
-                    if let Some(conversation) = value
-                        .conversations
-                        .iter_mut()
-                        .find(|conversation| conversation.id == conversation_id)
-                    {
-                        conversation.updated_at = now_millis();
-                        conversation.messages.push(Message {
-                            id: new_id("message"),
-                            role: "assistant".into(),
-                            content: response.answer,
-                            created_at: now_millis(),
-                            status: "complete".into(),
-                            sources: response.sources.clone(),
-                            usage: response.usage,
-                        });
-                    }
-                });
-                selected_sources.set(response.sources);
-                streamed_text.set(String::new());
-                stage.set("done".into());
-                persist_workspace(workspace, save_state);
-            }
-            Err(error) => {
-                let partial = streamed_text.get_clone();
-                let status = if error.contains("중단") {
-                    "cancelled"
-                } else {
-                    "failed"
-                };
-                if !partial.trim().is_empty() {
-                    workspace.update(|value| {
-                        if let Some(conversation) = value
-                            .conversations
-                            .iter_mut()
-                            .find(|conversation| conversation.id == conversation_id)
-                        {
-                            conversation.updated_at = now_millis();
-                            conversation.messages.push(Message {
-                                id: new_id("message"),
-                                role: "assistant".into(),
-                                content: partial,
-                                created_at: now_millis(),
-                                status: status.into(),
-                                sources: Vec::new(),
-                                usage: None,
-                            });
-                        }
-                    });
-                    persist_workspace(workspace, save_state);
-                }
-                stage.set(status.into());
-                streamed_text.set(String::new());
-                last_failed_question.set(question);
-                let mut error = error;
-                if error.contains("인증") || error.contains("API 키") {
-                    if let Err(clear_error) =
-                        ipc::command_unit("clear_api_key", &EmptyArgs {}).await
-                    {
-                        error = format!("{error} {clear_error}");
-                        let _ = ipc::command_unit("forget_api_key", &EmptyArgs {}).await;
-                    }
-                    key_configured.set(false);
-                    panel.set(Panel::Settings);
-                }
-                show_toast(error, "error", toast, toast_kind);
-            }
+        if let Err(error) = ipc::command_unit("open_external", &UrlArgs { url }).await {
+            state.show_toast(error, "error");
         }
     });
 }
 
-#[component]
-pub fn App() -> View {
-    let workspace = create_signal(Workspace::default());
-    let active_id = create_signal(String::new());
-    let composer = create_signal(String::new());
-    let search_query = create_signal(String::new());
-    let selected_sources = create_signal(Vec::<Source>::new());
-    let panel = create_signal(Panel::None);
-    let is_loading = create_signal(true);
-    let is_running = create_signal(false);
-    let active_request = create_signal(String::new());
-    let stage = create_signal(String::new());
-    let streamed_text = create_signal(String::new());
-    let key_configured = create_signal(false);
-    let key_input = create_signal(String::new());
-    let key_busy = create_signal(false);
-    let connection_message = create_signal(String::new());
-    let save_state = create_signal(String::new());
-    let last_failed_question = create_signal(String::new());
-    let toast = create_signal(String::new());
-    let toast_kind = create_signal(String::from("info"));
-    let storage_label = create_signal(String::from("이 기기에만 저장됨"));
-    let storage_writable = create_signal(true);
-
+fn copy_text(state: AppState, text: String) {
     spawn_local_scoped(async move {
-        let stream_result = ipc::listen::<ResearchEvent, _>("research-event", move |event| {
-            if event.request_id != active_request.get_clone() {
-                return;
-            }
-            match event.kind.as_str() {
-                "delta" => streamed_text.update(|value| value.push_str(&event.value)),
-                "stage" => stage.set(event.value),
-                _ => {}
-            }
-        })
-        .await;
-        if let Err(error) = stream_result {
-            show_toast(error, "error", toast, toast_kind);
+        let result = if let Some(window) = web_sys::window() {
+            wasm_bindgen_futures::JsFuture::from(window.navigator().clipboard().write_text(&text))
+                .await
+                .map(|_| ())
+                .map_err(|_| ())
+        } else {
+            Err(())
+        };
+        if result.is_ok() {
+            state.show_toast("답변을 클립보드에 복사했습니다.", "success");
+        } else {
+            state.show_toast("클립보드에 복사하지 못했습니다.", "error");
         }
     });
-
-    spawn_local_scoped(async move {
-        match ipc::command::<_, BootstrapResponse>("bootstrap", &EmptyArgs {}).await {
-            Ok(response) => {
-                update_theme(&response.workspace.settings.theme);
-                let first_id = response
-                    .workspace
-                    .conversations
-                    .iter()
-                    .max_by_key(|conversation| conversation.updated_at)
-                    .map(|conversation| conversation.id.clone())
-                    .unwrap_or_default();
-                selected_sources.set(source_list(&response.workspace, &first_id));
-                active_id.set(first_id);
-                key_configured.set(response.key_configured);
-                if response.key_configured {
-                    connection_message.set("보안 저장소에서 자동 복원됨".into());
-                }
-                storage_label.set(response.storage_label);
-                storage_writable.set(response.storage_writable);
-                workspace.set(response.workspace);
-                let notices = [response.recovery_notice, response.credential_notice]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>();
-                if !notices.is_empty() {
-                    show_toast(notices.join(" "), "warning", toast, toast_kind);
-                }
-            }
-            Err(error) => show_toast(error, "error", toast, toast_kind),
-        }
-        is_loading.set(false);
-    });
-
-    let submit = move |event: SubmitEvent| {
-        event.prevent_default();
-        send_question(
-            composer,
-            active_id,
-            workspace,
-            key_configured,
-            is_running,
-            active_request,
-            stage,
-            streamed_text,
-            selected_sources,
-            last_failed_question,
-            save_state,
-            panel,
-            toast,
-            toast_kind,
-        );
-    };
-
-    let composer_keydown = move |event: KeyboardEvent| {
-        if event.key() == "Escape" && panel.get() != Panel::None {
-            panel.set(Panel::None);
-            return;
-        }
-        if event.key() == "Enter" && !event.shift_key() && !event.is_composing() {
-            event.prevent_default();
-            send_question(
-                composer,
-                active_id,
-                workspace,
-                key_configured,
-                is_running,
-                active_request,
-                stage,
-                streamed_text,
-                selected_sources,
-                last_failed_question,
-                save_state,
-                panel,
-                toast,
-                toast_kind,
-            );
-        }
-    };
-
-    view! {
-        div(class=move || format!("app-shell {}", if panel.get() != Panel::None { "panel-open" } else { "" })) {
-            a(class="skip-link", href="#main-content") { "본문으로 건너뛰기" }
-
-            aside(class=move || format!("sidebar {}", if panel.get() == Panel::Sidebar { "visible" } else { "" }), aria-label="탐구 기록") {
-                div(class="brand") {
-                    div(class="brand-mark", aria-hidden="true") {
-                        span(class="water-line") {}
-                        span(class="fugu-dot dot-one") {}
-                        span(class="fugu-dot dot-two") {}
-                        span(class="fugu-dot dot-three") {}
-                    }
-                    div {
-                        strong { "SUISOU" }
-                        small { "RESEARCH COMPANION" }
-                    }
-                    button(class="icon-button mobile-only", aria-label="메뉴 닫기", on:click=move |_| panel.set(Panel::None)) { (icon("close")) }
-                }
-
-                button(class="new-research", disabled=move || is_running.get() || !storage_writable.get(), on:click=move |_| new_conversation(active_id, selected_sources, composer, panel)) {
-                    (icon("plus"))
-                    span { "새로운 탐구" }
-                    kbd { "⌘ N" }
-                }
-
-                label(class="history-search") {
-                    span(class="sr-only") { "대화 기록 검색" }
-                    (icon("search"))
-                    input(bind:value=search_query, placeholder="기록에서 검색", autocomplete="off")
-                }
-
-                nav(class="history-list", aria-label="저장된 탐구") {
-                    (if workspace.get_clone().conversations.is_empty() {
-                        view! {
-                            div(class="history-empty") {
-                                span(class="empty-ripple") {}
-                                p { "첫 질문이 여기에 기록됩니다." }
-                            }
-                        }
-                    } else {
-                        view! {
-                            Indexed(
-                                list=move || {
-                                    let query = search_query.get_clone().to_lowercase();
-                                    let mut values = workspace.get_clone().conversations;
-                                    values.retain(|conversation| {
-                                        query.is_empty()
-                                            || conversation.title.to_lowercase().contains(&query)
-                                            || conversation.messages.iter().any(|message| message.content.to_lowercase().contains(&query))
-                                    });
-                                    values.sort_by_key(|conversation| (!conversation.pinned, std::cmp::Reverse(conversation.updated_at)));
-                                    values
-                                },
-                                view=move |conversation: Conversation| {
-                                    let id = conversation.id.clone();
-                                    let class_id = id.clone();
-                                    view! {
-                                        button(
-                                            class=move || format!("history-item {}", if active_id.get_clone() == class_id { "active" } else { "" }),
-                                            aria-current=move || if active_id.get_clone() == id { "page" } else { "false" },
-                                            disabled=is_running.get(),
-                                            on:click=move |_| set_active_conversation(conversation.id.clone(), active_id, selected_sources, panel, workspace)
-                                        ) {
-                                            span(class="history-glyph") { (if conversation.pinned { icon("pin") } else { icon("search") }) }
-                                            span(class="history-copy") {
-                                                strong { (conversation.title.clone()) }
-                                                small { (format_relative_time(conversation.updated_at)) }
-                                            }
-                                        }
-                                    }
-                                }
-                            )
-                        }
-                    })
-                }
-
-                div(class="sidebar-footer") {
-                    div(class="storage-status") {
-                        span(class="status-light") {}
-                        div {
-                            strong { (storage_label) }
-                            small { (move || match save_state.get_clone().as_str() {
-                                "saving" => "저장 중…",
-                                value if value.starts_with("error:") => "저장 오류",
-                                _ => "오프라인에서도 기록 열람 가능",
-                            }) }
-                        }
-                    }
-                    button(class="settings-button", on:click=move |_| panel.set(Panel::Settings)) {
-                        (icon("settings"))
-                        "설정"
-                    }
-                }
-            }
-
-            main(id="main-content", class="workspace") {
-                header(class="topbar") {
-                    div(class="topbar-start") {
-                        button(class="icon-button mobile-only", aria-label="탐구 기록 열기", on:click=move |_| panel.set(Panel::Sidebar)) { (icon("menu")) }
-                        div(class="conversation-heading") {
-                            small { "CURRENT DIVE" }
-                            strong { (move || current_conversation(&workspace.get_clone(), &active_id.get_clone()).map(|value| value.title).unwrap_or_else(|| "새로운 탐구".into())) }
-                        }
-                    }
-                    div(class="topbar-actions") {
-                        span(class=move || format!("connection-pill {}", if key_configured.get() { "connected" } else { "disconnected" })) {
-                            span(class="connection-dot") {}
-                            (move || if key_configured.get() { "Fugu 연결됨" } else { "API 키 필요" })
-                        }
-                        button(class="icon-button", aria-label="출처 패널 열기", on:click=move |_| panel.set(Panel::Sources)) {
-                            (icon("sources"))
-                            (if !selected_sources.get_clone().is_empty() {
-                                view! { span(class="count-badge") { (selected_sources.get_clone().len()) } }
-                            } else { View::default() })
-                        }
-                    }
-                }
-
-                section(class="transcript", aria-label="대화") {
-                    (if is_loading.get() {
-                        view! {
-                            div(class="loading-state", role="status") {
-                                span(class="sonar-loader") {}
-                                p { "작업 공간을 여는 중…" }
-                            }
-                        }
-                    } else if active_id.get_clone().is_empty() {
-                        view! {
-                            section(class="welcome") {
-                                div(class="welcome-orbit", aria-hidden="true") {
-                                    span(class="orbit orbit-one") {}
-                                    span(class="orbit orbit-two") {}
-                                    div(class="fugu-core") { (icon("spark")) }
-                                }
-                                p(class="eyebrow") { "DIVE PAST THE OBVIOUS" }
-                                h1 { "질문 아래의 " em { "근거" } "까지." }
-                                p(class="welcome-copy") { "Sakana Fugu의 다중 에이전트 추론으로 웹을 교차 검증하고, 답보다 오래 남는 연구 기록을 만듭니다." }
-                                div(class="suggestion-grid") {
-                                    button(on:click=move |_| composer.set("이번 주 AI 에이전트 분야의 주요 발표를 출처별로 교차 검증해 줘".into())) {
-                                        span(class="suggestion-icon coral") { (icon("globe")) }
-                                        span { strong { "이번 주의 흐름" } small { "AI 에이전트 주요 발표 교차 검증" } }
-                                    }
-                                    button(on:click=move |_| composer.set("한국과 일본의 생성형 AI 정책을 공식 자료 중심으로 비교해 줘".into())) {
-                                        span(class="suggestion-icon blue") { (icon("deep")) }
-                                        span { strong { "정책 비교" } small { "공식 자료의 차이와 공통점" } }
-                                    }
-                                    button(on:click=move |_| composer.set("이 주장의 찬반 근거를 찾아 신뢰도와 한계를 표로 정리해 줘: ".into())) {
-                                        span(class="suggestion-icon gold") { (icon("search")) }
-                                        span { strong { "주장 검증" } small { "찬반 근거와 신뢰도 평가" } }
-                                    }
-                                }
-                                p(class="privacy-note") { (icon("key")) " 질문은 Sakana로 전송됩니다. 개인정보·기밀은 입력하지 마세요." }
-                            }
-                        }
-                    } else {
-                        view! {
-                            div(class="message-stack") {
-                                Indexed(
-                                    list=move || current_conversation(&workspace.get_clone(), &active_id.get_clone()).map(|value| value.messages).unwrap_or_default(),
-                                    view=move |message: Message| message_view(message, selected_sources, panel, toast, toast_kind)
-                                )
-
-                                (if is_running.get() {
-                                    view! {
-                                        article(class="message assistant streaming", aria-live="polite") {
-                                            div(class="message-meta") {
-                                                span(class="role-mark sonar") { span {} }
-                                                strong { "Suisou" }
-                                                span(class="research-stage") { (stage_label(&stage.get_clone())) }
-                                            }
-                                            (if streamed_text.get_clone().is_empty() {
-                                                view! {
-                                                    div(class="research-progress") {
-                                                        (progress_step("연결", stage_index(&stage.get_clone()) >= 0, stage.get_clone() == "connecting"))
-                                                        (progress_step("검색", stage_index(&stage.get_clone()) >= 1, stage.get_clone() == "searching"))
-                                                        (progress_step("검토", stage_index(&stage.get_clone()) >= 2, stage.get_clone() == "reasoning"))
-                                                        (progress_step("작성", stage_index(&stage.get_clone()) >= 3, stage.get_clone() == "writing"))
-                                                    }
-                                                }
-                                            } else {
-                                                view! { div(class="message-body") { (streamed_text) span(class="typing-cursor") {} } }
-                                            })
-                                        }
-                                    }
-                                } else if !last_failed_question.get_clone().is_empty() {
-                                    view! {
-                                        div(class="retry-banner") {
-                                            span { "답변 생성이 완료되지 않았습니다." }
-                                            button(on:click=move |_| {
-                                                composer.set(last_failed_question.get_clone());
-                                                let failed_id = active_id.get_clone();
-                                                workspace.update(|value| {
-                                                    if let Some(conversation) = value.conversations.iter_mut().find(|conversation| conversation.id == failed_id) {
-                                                        if conversation.messages.last().map(|message| message.status.as_str()) == Some("failed")
-                                                            || conversation.messages.last().map(|message| message.status.as_str()) == Some("cancelled")
-                                                        {
-                                                            conversation.messages.pop();
-                                                        }
-                                                        if conversation.messages.last().map(|message| message.role.as_str()) == Some("user") { conversation.messages.pop(); }
-                                                    }
-                                                });
-                                                persist_workspace(workspace, save_state);
-                                                send_question(composer, active_id, workspace, key_configured, is_running, active_request, stage, streamed_text, selected_sources, last_failed_question, save_state, panel, toast, toast_kind);
-                                            }) { (icon("retry")) "다시 시도" }
-                                        }
-                                    }
-                                } else { View::default() })
-                            }
-                        }
-                    })
-                }
-
-                form(class="composer-wrap", on:submit=submit) {
-                    div(class="mode-tabs", role="radiogroup", aria-label="연구 방식") {
-                        (mode_button("quick", "빠른 답변", "spark", workspace, save_state))
-                        (mode_button("search", "웹 검색", "globe", workspace, save_state))
-                        (mode_button("deep", "딥 리서치", "deep", workspace, save_state))
-                    }
-                    div(class="composer") {
-                        label(class="sr-only", r#for="question-input") { "질문 입력" }
-                        textarea(
-                            id="question-input",
-                            bind:value=composer,
-                            on:keydown=composer_keydown,
-                            placeholder="무엇을 깊이 알아볼까요?",
-                            rows="1",
-                            maxlength="20000",
-                            disabled=move || is_running.get() || !storage_writable.get()
-                        ) {}
-                        div(class="composer-bottom") {
-                            div(class="model-controls") {
-                                label {
-                                    span(class="sr-only") { "Fugu 모델" }
-                                    select(on:change=move |event: Event| {
-                                        if let Some(value) = select_value(event) {
-                                            workspace.update(|state| state.settings.model = value);
-                                            persist_workspace(workspace, save_state);
-                                        }
-                                    }) {
-                                        option(value="fugu", selected=workspace.get_clone().settings.model == "fugu") { "Fugu" }
-                                        option(value="fugu-ultra", selected=workspace.get_clone().settings.model != "fugu") { "Fugu Ultra" }
-                                    }
-                                }
-                                span(class="control-divider") {}
-                                label {
-                                    span(class="sr-only") { "추론 강도" }
-                                    select(on:change=move |event: Event| {
-                                        if let Some(value) = select_value(event) {
-                                            workspace.update(|state| state.settings.reasoning = value);
-                                            persist_workspace(workspace, save_state);
-                                        }
-                                    }) {
-                                        option(value="high", selected=workspace.get_clone().settings.reasoning == "high") { "High" }
-                                        option(value="xhigh", selected=workspace.get_clone().settings.reasoning == "xhigh") { "X-High" }
-                                        option(value="max", selected=workspace.get_clone().settings.reasoning == "max") { "Max" }
-                                    }
-                                }
-                            }
-                            (if is_running.get() {
-                                view! { button(class="send-button stop", r#type="button", aria-label="답변 생성 중지", on:click=move |_| cancel_request(active_request, toast, toast_kind)) { (icon("stop")) } }
-                            } else {
-                                view! { button(class="send-button", r#type="submit", aria-label="질문 보내기", disabled=move || composer.get_clone().trim().is_empty() || !storage_writable.get()) { (icon("send")) } }
-                            })
-                        }
-                    }
-                    p(class="composer-hint") { "Enter로 전송 · Shift+Enter로 줄바꿈 · 출처는 반드시 원문에서 다시 확인하세요" }
-                }
-            }
-
-            aside(class=move || format!("sources-panel {}", if panel.get() == Panel::Sources { "visible" } else { "" }), role="dialog", aria-modal="true", aria-hidden=move || (panel.get() != Panel::Sources).to_string(), aria-label="출처") {
-                div(class="panel-header") {
-                    div { small { "EVIDENCE DECK" } h2 { "검색·인용 출처" } }
-                    button(class="icon-button", aria-label="출처 패널 닫기", on:click=move |_| panel.set(Panel::None)) { (icon("close")) }
-                }
-                (if selected_sources.get_clone().is_empty() {
-                    view! {
-                        div(class="sources-empty") {
-                            span(class="source-rings") { (icon("sources")) }
-                            h3 { "아직 출처가 없습니다" }
-                            p { "웹 검색이나 딥 리서치로 질문하면 Fugu가 확인한 근거를 여기에 모읍니다." }
-                        }
-                    }
-                } else {
-                    view! {
-                        div(class="source-list") {
-                            Indexed(
-                                list=selected_sources,
-                                view=move |source: Source| {
-                                    let index = selected_sources
-                                        .get_clone()
-                                        .iter()
-                                        .position(|item| item.id == source.id)
-                                        .unwrap_or(0)
-                                        + 1;
-                                    source_view(source, index, toast, toast_kind)
-                                }
-                            )
-                        }
-                    }
-                })
-            }
-
-            aside(class=move || format!("settings-panel {}", if panel.get() == Panel::Settings { "visible" } else { "" }), role="dialog", aria-modal="true", aria-hidden=move || (panel.get() != Panel::Settings).to_string(), aria-label="설정") {
-                div(class="panel-header") {
-                    div { small { "CONTROL ROOM" } h2 { "설정" } }
-                    button(class="icon-button", aria-label="설정 닫기", on:click=move |_| panel.set(Panel::None)) { (icon("close")) }
-                }
-                div(class="settings-content") {
-                    section(class="setting-section") {
-                        div(class="setting-title") { span(class="setting-number") { "01" } div { h3 { "Sakana API" } p { "키는 운영체제 보안 저장소에 보관되며 앱 시작 시 자동 복원됩니다." } } }
-                        (if key_configured.get() {
-                            view! {
-                                div(class="key-connected") {
-                                    span { (icon("check")) }
-                                    div { strong { "Fugu 연결 준비 완료" } small { (if connection_message.get_clone().is_empty() { "이 기기의 보안 저장소에 저장됨".into() } else { connection_message.get_clone() }) } }
-                                    button(on:click=move |_| clear_key(key_configured, connection_message, toast, toast_kind)) { "연결 해제" }
-                                }
-                            }
-                        } else {
-                            view! {
-                                form(class="key-form", on:submit=move |event: SubmitEvent| {
-                                    event.prevent_default();
-                                    connect_key(key_input, key_busy, key_configured, connection_message, toast, toast_kind);
-                                }) {
-                                    label(r#for="api-key") { "Sakana API key" }
-                                    div(class="key-input-row") {
-                                        input(id="api-key", r#type="password", bind:value=key_input, autocomplete="off", placeholder="키 붙여넣기", disabled=key_busy.get())
-                                        button(r#type="submit", disabled=move || key_busy.get() || key_input.get_clone().trim().is_empty()) { (move || if key_busy.get() { "확인 중…" } else { "연결" }) }
-                                    }
-                                    p { "키는 작업 공간 파일·브라우저 저장소·로그가 아닌 운영체제 보안 저장소에 기록됩니다." }
-                                }
-                            }
-                        })
-                    }
-
-                    section(class="setting-section") {
-                        div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "화면" } p { "환경과 선호에 맞는 명암을 선택합니다." } } }
-                        div(class="segmented-control") {
-                            (theme_button("system", "시스템", workspace, save_state))
-                            (theme_button("light", "라이트", workspace, save_state))
-                            (theme_button("dark", "다크", workspace, save_state))
-                        }
-                    }
-
-                    section(class="setting-section caution") {
-                        div(class="setting-title") { span(class="setting-number") { "03" } div { h3 { "데이터와 개인정보" } p { "대화 기록은 이 기기에 저장되지만, 질문과 문맥은 답변 생성을 위해 Sakana로 전송됩니다." } } }
-                        ul {
-                            li { "개인정보·건강·금융·회사 기밀을 입력하지 마세요." }
-                            li { "Sakana의 보존·학습 설정과 약관을 배포 전에 확인하세요." }
-                            li { "기기 간 동기화는 아직 제공하지 않습니다." }
-                        }
-                        button(class="policy-link", on:click=move |_| open_url("https://console.sakana.ai/privacy-policy".into(), toast, toast_kind)) { "Sakana 개인정보 정책" (icon("external")) }
-                    }
-
-                    (if !active_id.get_clone().is_empty() {
-                        view! {
-                            section(class="setting-section conversation-tools") {
-                                h3 { "현재 대화" }
-                                div(class="tool-row") {
-                                    button(on:click=move |_| toggle_pin(active_id, workspace, save_state)) { (icon("pin")) "고정 전환" }
-                                    button(on:click=move |_| export_current(active_id, workspace, toast, toast_kind)) { (icon("export")) "Markdown 내보내기" }
-                                    button(class="danger", disabled=is_running.get(), on:click=move |_| delete_conversation(active_id, workspace, selected_sources, save_state)) { (icon("trash")) "삭제" }
-                                }
-                            }
-                        }
-                    } else { View::default() })
-                }
-            }
-
-            (if panel.get() != Panel::None {
-                view! { button(class="scrim", aria-label="패널 닫기", on:click=move |_| panel.set(Panel::None)) {} }
-            } else { View::default() })
-
-            (if !toast.get_clone().is_empty() {
-                view! {
-                    div(class=format!("toast {}", toast_kind.get_clone()), role="status", aria-live="polite") {
-                        span { (toast.get_clone()) }
-                        button(aria-label="알림 닫기", on:click=move |_| toast.set(String::new())) { (icon("close")) }
-                    }
-                }
-            } else { View::default() })
-        }
-    }
 }
 
-fn mode_button(
-    value: &'static str,
-    label: &'static str,
-    icon_name: &'static str,
-    workspace: Signal<Workspace>,
-    save_state: Signal<String>,
-) -> View {
-    view! {
-        button(
-            r#type="button",
-            role="radio",
-            aria-checked=move || (workspace.get_clone().settings.last_mode == value).to_string(),
-            class=move || if workspace.get_clone().settings.last_mode == value { "active" } else { "" },
-            on:click=move |_| {
-                workspace.update(|state| state.settings.last_mode = value.into());
-                persist_workspace(workspace, save_state);
-            }
-        ) { (icon(icon_name)) (label) }
-    }
-}
-
-fn theme_button(
-    value: &'static str,
-    label: &'static str,
-    workspace: Signal<Workspace>,
-    save_state: Signal<String>,
-) -> View {
-    view! {
-        button(
-            class=move || if workspace.get_clone().settings.theme == value { "active" } else { "" },
-            on:click=move |_| {
-                update_theme(value);
-                workspace.update(|state| state.settings.theme = value.into());
-                persist_workspace(workspace, save_state);
-            }
-        ) { (label) }
-    }
-}
-
-fn message_view(
-    message: Message,
-    selected_sources: Signal<Vec<Source>>,
-    panel: Signal<Panel>,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) -> View {
-    let is_assistant = message.role == "assistant";
-    let role_class = message.role.clone();
-    let content = message.content.clone();
-    let created_at = message.created_at;
-    let status_label = match message.status.as_str() {
-        "failed" => Some("완료되지 않은 부분 답변"),
-        "cancelled" => Some("중단된 부분 답변"),
-        _ => None,
-    };
-    let footer = if is_assistant {
-        answer_footer(
-            message.content,
-            message.sources,
-            message.usage.map(|usage| usage.total_tokens),
-            selected_sources,
-            panel,
-            toast,
-            toast_kind,
-        )
-    } else {
-        View::default()
-    };
-    view! {
-        article(class=format!("message {role_class}")) {
-            div(class="message-meta") {
-                span(class="role-mark") { (if is_assistant { "水" } else { "나" }) }
-                strong { (if is_assistant { "Suisou" } else { "나의 질문" }) }
-                (status_label.map(|label| view! { span(class="partial-label") { (label) } }).unwrap_or_default())
-                time { (format_relative_time(created_at)) }
-            }
-            div(class="message-body") { (content) }
-            (footer)
-        }
-    }
-}
-
-fn answer_footer(
-    content: String,
-    sources: Vec<Source>,
-    total_tokens: Option<u64>,
-    selected_sources: Signal<Vec<Source>>,
-    panel: Signal<Panel>,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) -> View {
-    let source_count = sources.len();
-    let source_action = if source_count > 0 {
-        view! {
-            button(class="text-action", on:click=move |_| {
-                selected_sources.set(sources.clone());
-                panel.set(Panel::Sources);
-            }) { (icon("sources")) (format!("출처 {source_count}")) }
-        }
-    } else {
-        View::default()
-    };
-    let usage_view = total_tokens
-        .map(|total| view! { small(class="usage") { (format!("총 {total} tokens")) } })
-        .unwrap_or_default();
-    view! {
-        div(class="answer-footer") {
-            div(class="answer-actions") {
-                button(class="text-action", on:click=move |_| copy_text(content.clone(), toast, toast_kind)) { (icon("copy")) "복사" }
-                (source_action)
-            }
-            (usage_view)
-        }
-    }
-}
-
-fn source_view(
-    source: Source,
-    index: usize,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) -> View {
-    let url = source.url;
-    let snippet_view = if source.snippet.is_empty() {
-        View::default()
-    } else {
-        view! { p { (source.snippet) } }
-    };
-    view! {
-        article(class="source-card") {
-            div(class="source-index") { (format!("{index:02}")) }
-            div(class="source-content") {
-                small { (source.domain) }
-                h3 { (source.title) }
-                (snippet_view)
-                button(on:click=move |_| open_url(url.clone(), toast, toast_kind)) { "원문 열기" (icon("external")) }
-            }
-        }
-    }
-}
-
-fn progress_step(label: &'static str, active: bool, current: bool) -> View {
-    view! {
-        div(class=format!("progress-step {} {}", if active { "active" } else { "" }, if current { "current" } else { "" })) {
-            span(class="step-dot") { (if active { icon("check") } else { View::default() }) }
-            small { (label) }
-        }
-    }
+fn select_value(event: Event) -> Option<String> {
+    event
+        .target()?
+        .dyn_into::<web_sys::HtmlSelectElement>()
+        .ok()
+        .map(|element| element.value())
 }
 
 fn stage_index(stage: &str) -> i32 {
@@ -1062,158 +604,959 @@ fn stage_label(stage: &str) -> &'static str {
     }
 }
 
-fn select_value(event: Event) -> Option<String> {
-    event
-        .target()?
-        .dyn_into::<web_sys::HtmlSelectElement>()
-        .ok()
-        .map(|element| element.value())
+#[component]
+pub fn App() -> View {
+    let state = AppState::new();
+    provide_context(state);
+
+    view! {
+        div(class=move || format!("app-shell {}", if state.panel.get() != Panel::None { "panel-open" } else { "" })) {
+            a(class="skip-link", href="#main-content") { "본문으로 건너뛰기" }
+            AppRuntime {}
+            Sidebar {}
+            WorkspaceView {}
+            SourcesPanel {}
+            SettingsPanel {}
+            OverlayLayer {}
+        }
+    }
 }
 
-fn copy_text(text: String, toast: Signal<String>, toast_kind: Signal<String>) {
+#[component]
+fn AppRuntime() -> View {
+    let state = use_context::<AppState>();
+
     spawn_local_scoped(async move {
-        let result = if let Some(window) = web_sys::window() {
-            wasm_bindgen_futures::JsFuture::from(window.navigator().clipboard().write_text(&text))
-                .await
-                .map(|_| ())
-                .map_err(|_| ())
-        } else {
-            Err(())
-        };
-        if result.is_ok() {
-            show_toast(
-                "답변을 클립보드에 복사했습니다.".into(),
-                "success",
-                toast,
-                toast_kind,
-            );
-        } else {
-            show_toast(
-                "클립보드에 복사하지 못했습니다.".into(),
-                "error",
-                toast,
-                toast_kind,
-            );
+        match ipc::listen::<ResearchEvent, _>("research-event", move |event| {
+            if event.request_id != state.active_request.get_clone_untracked() {
+                return;
+            }
+            match event.kind.as_str() {
+                "delta" => state
+                    .streamed_text
+                    .update(|value| value.push_str(&event.value)),
+                "stage" => state.stage.set(event.value),
+                _ => {}
+            }
+        })
+        .await
+        {
+            Ok(listener) => on_cleanup(move || listener.unlisten()),
+            Err(error) => state.show_toast(error, "error"),
         }
     });
-}
 
-fn open_url(url: String, toast: Signal<String>, toast_kind: Signal<String>) {
-    spawn_local_scoped(async move {
-        if let Err(error) = ipc::command_unit("open_external", &UrlArgs { url }).await {
-            show_toast(error, "error", toast, toast_kind);
+    view! {
+        Suspense(fallback=View::default) {
+            BootstrapWorkspace {}
         }
-    });
+    }
 }
 
-fn cancel_request(
-    active_request: Signal<String>,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) {
-    let request_id = active_request.get_clone();
-    spawn_local_scoped(async move {
-        match ipc::command::<_, bool>("cancel_research", &RequestIdArgs { request_id }).await {
-            Ok(true) => show_toast(
-                "답변 생성을 중단했습니다.".into(),
-                "info",
-                toast,
-                toast_kind,
-            ),
-            Ok(false) => show_toast("이미 완료된 요청입니다.".into(), "info", toast, toast_kind),
-            Err(error) => show_toast(error, "error", toast, toast_kind),
-        }
-    });
-}
-
-fn connect_key(
-    key_input: Signal<String>,
-    key_busy: Signal<bool>,
-    key_configured: Signal<bool>,
-    connection_message: Signal<String>,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) {
-    let api_key = key_input.get_clone();
-    key_input.set(String::new());
-    key_busy.set(true);
-    show_toast(
-        "API 키 확인 후 운영체제 보안 저장소의 잠금 해제 창이 나타나면 완료해 주세요.".into(),
-        "info",
-        toast,
-        toast_kind,
-    );
-    spawn_local_scoped(async move {
-        let result =
-            ipc::command::<_, ConnectionInfo>("connect_api_key", &ApiKeyArgs { api_key }).await;
-        key_busy.set(false);
-        match result {
-            Ok(info) => {
-                key_configured.set(true);
-                let model_note = if info.models.is_empty() {
-                    String::new()
+#[component]
+async fn BootstrapWorkspace() -> View {
+    let state = use_context::<AppState>();
+    match ipc::command::<_, BootstrapResponse>("bootstrap", &EmptyArgs {}).await {
+        Ok(response) => {
+            update_theme(&response.workspace.settings.theme);
+            let first_id = response
+                .workspace
+                .conversations
+                .iter()
+                .max_by_key(|conversation| conversation.updated_at)
+                .map(|conversation| conversation.id.clone())
+                .unwrap_or_default();
+            let sources = source_list(&response.workspace, &first_id);
+            let notices = [response.recovery_notice, response.credential_notice]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+            batch(move || {
+                state.selected_sources.set(sources);
+                state.active_id.set(first_id);
+                state.key_configured.set(response.key_configured);
+                state.connection_message.set(if response.key_configured {
+                    "보안 저장소에서 자동 복원됨".into()
                 } else {
-                    format!(" · {}개 Fugu 모델", info.models.len())
-                };
-                connection_message.set(format!("{}{model_note}", info.message));
-                show_toast(
-                    "Sakana API 연결을 확인하고 키를 안전하게 저장했습니다.".into(),
-                    "success",
-                    toast,
-                    toast_kind,
-                );
-            }
-            Err(error) => show_toast(error, "error", toast, toast_kind),
-        }
-    });
-}
-
-fn clear_key(
-    key_configured: Signal<bool>,
-    connection_message: Signal<String>,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) {
-    spawn_local_scoped(async move {
-        match ipc::command_unit("clear_api_key", &EmptyArgs {}).await {
-            Ok(()) => {
-                key_configured.set(false);
-                connection_message.set(String::new());
-                show_toast(
-                    "API 키를 메모리와 운영체제 보안 저장소에서 제거했습니다.".into(),
-                    "success",
-                    toast,
-                    toast_kind,
-                );
-            }
-            Err(error) => {
-                key_configured.set(false);
-                connection_message.set(String::new());
-                show_toast(error, "error", toast, toast_kind);
+                    String::new()
+                });
+                state.storage_label.set(response.storage_label);
+                state.storage_writable.set(response.storage_writable);
+                state.workspace.set(response.workspace);
+                state.is_loading.set(false);
+            });
+            if !notices.is_empty() {
+                state.show_toast(notices.join(" "), "warning");
             }
         }
-    });
+        Err(error) => {
+            state.is_loading.set(false);
+            state.show_toast(error, "error");
+        }
+    }
+    View::default()
 }
 
-fn export_current(
-    active_id: Signal<String>,
-    workspace: Signal<Workspace>,
-    toast: Signal<String>,
-    toast_kind: Signal<String>,
-) {
-    let Some(conversation) = current_conversation(&workspace.get_clone(), &active_id.get_clone())
-    else {
-        return;
+#[derive(Clone, PartialEq)]
+struct HistoryEntry {
+    id: String,
+    title: String,
+    pinned: bool,
+    updated_at: u64,
+}
+
+#[component]
+fn Sidebar() -> View {
+    let state = use_context::<AppState>();
+    let filtered_conversations = create_selector(move || {
+        let query = state.search_query.get_clone().to_lowercase();
+        state.workspace.with(|workspace| {
+            let mut values = workspace
+                .conversations
+                .iter()
+                .filter(|conversation| {
+                    query.is_empty()
+                        || conversation.title.to_lowercase().contains(&query)
+                        || conversation
+                            .messages
+                            .iter()
+                            .any(|message| message.content.to_lowercase().contains(&query))
+                })
+                .map(|conversation| HistoryEntry {
+                    id: conversation.id.clone(),
+                    title: conversation.title.clone(),
+                    pinned: conversation.pinned,
+                    updated_at: conversation.updated_at,
+                })
+                .collect::<Vec<_>>();
+            values.sort_by_key(|conversation| {
+                (
+                    !conversation.pinned,
+                    std::cmp::Reverse(conversation.updated_at),
+                )
+            });
+            values
+        })
+    });
+    let is_history_empty = create_selector(move || {
+        state
+            .workspace
+            .with(|workspace| workspace.conversations.is_empty())
+    });
+
+    view! {
+        aside(class=move || format!("sidebar {}", if state.panel.get() == Panel::Sidebar { "visible" } else { "" }), aria-label="탐구 기록") {
+            div(class="brand") {
+                div(class="brand-mark", aria-hidden="true") {
+                    span(class="water-line") {}
+                    span(class="fugu-dot dot-one") {}
+                    span(class="fugu-dot dot-two") {}
+                    span(class="fugu-dot dot-three") {}
+                }
+                div { strong { "SUISOU" } small { "RESEARCH COMPANION" } }
+                button(class="icon-button mobile-only", aria-label="메뉴 닫기", on:click=move |_| state.close_panel()) { (icon("close")) }
+            }
+
+            button(
+                class="new-research",
+                disabled=move || state.is_running.get() || !state.storage_writable.get(),
+                on:click=move |_| state.new_conversation()
+            ) {
+                (icon("plus"))
+                span { "새로운 탐구" }
+                kbd { "⌘ N" }
+            }
+
+            label(class="history-search") {
+                span(class="sr-only") { "대화 기록 검색" }
+                (icon("search"))
+                input(bind:value=state.search_query, placeholder="기록에서 검색", autocomplete="off")
+            }
+
+            nav(class="history-list", aria-label="저장된 탐구") {
+                (if is_history_empty.get() {
+                    view! {
+                        div(class="history-empty") {
+                            span(class="empty-ripple") {}
+                            p { "첫 질문이 여기에 기록됩니다." }
+                        }
+                    }
+                } else {
+                    View::default()
+                })
+                Keyed(
+                    list=filtered_conversations,
+                    key=|conversation| (
+                        conversation.id.clone(),
+                        conversation.updated_at,
+                        conversation.pinned,
+                        conversation.title.clone(),
+                    ),
+                    view=move |conversation: HistoryEntry| view! {
+                        HistoryItem(conversation=conversation)
+                    }
+                )
+            }
+
+            div(class="sidebar-footer") {
+                div(class="storage-status") {
+                    span(class="status-light") {}
+                    div {
+                        strong { (state.storage_label) }
+                        small { (move || match state.save_state.get_clone().as_str() {
+                            "saving" => "저장 중…",
+                            value if value.starts_with("error:") => "저장 오류",
+                            _ => "오프라인에서도 기록 열람 가능",
+                        }) }
+                    }
+                }
+                button(class="settings-button", on:click=move |_| state.panel.set(Panel::Settings)) {
+                    (icon("settings"))
+                    "설정"
+                }
+            }
+        }
+    }
+}
+
+#[derive(Props)]
+struct HistoryItemProps {
+    conversation: HistoryEntry,
+}
+
+#[component]
+fn HistoryItem(props: HistoryItemProps) -> View {
+    let state = use_context::<AppState>();
+    let conversation = props.conversation;
+    let id = conversation.id.clone();
+    let class_id = id.clone();
+    let click_id = id.clone();
+    view! {
+        button(
+            class=move || format!("history-item {}", if state.active_id.get_clone() == class_id { "active" } else { "" }),
+            aria-current=move || if state.active_id.get_clone() == id { "page" } else { "false" },
+            disabled=state.is_running,
+            on:click=move |_| state.select_conversation(click_id.clone())
+        ) {
+            span(class="history-glyph") { (if conversation.pinned { icon("pin") } else { icon("search") }) }
+            span(class="history-copy") {
+                strong { (conversation.title) }
+                small { (format_relative_time(conversation.updated_at)) }
+            }
+        }
+    }
+}
+
+#[component]
+fn WorkspaceView() -> View {
+    view! {
+        main(id="main-content", class="workspace") {
+            TopBar {}
+            Transcript {}
+            Composer {}
+        }
+    }
+}
+
+#[component]
+fn TopBar() -> View {
+    let state = use_context::<AppState>();
+    let current_title = create_memo(move || {
+        let active_id = state.active_id.get_clone();
+        state.workspace.with(|workspace| {
+            current_conversation_ref(workspace, &active_id)
+                .map(|conversation| conversation.title.clone())
+                .unwrap_or_else(|| "새로운 탐구".into())
+        })
+    });
+    let source_count = state.selected_sources.map(Vec::len);
+
+    view! {
+        header(class="topbar") {
+            div(class="topbar-start") {
+                button(class="icon-button mobile-only", aria-label="탐구 기록 열기", on:click=move |_| state.panel.set(Panel::Sidebar)) { (icon("menu")) }
+                div(class="conversation-heading") {
+                    small { "CURRENT DIVE" }
+                    strong { (current_title) }
+                }
+            }
+            div(class="topbar-actions") {
+                span(class=move || format!("connection-pill {}", if state.key_configured.get() { "connected" } else { "disconnected" })) {
+                    span(class="connection-dot") {}
+                    (move || if state.key_configured.get() { "Fugu 연결됨" } else { "API 키 필요" })
+                }
+                button(class="icon-button", aria-label="출처 패널 열기", on:click=move |_| state.panel.set(Panel::Sources)) {
+                    (icon("sources"))
+                    (if source_count.get() > 0 {
+                        view! { span(class="count-badge") { (source_count) } }
+                    } else {
+                        View::default()
+                    })
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn Transcript() -> View {
+    let state = use_context::<AppState>();
+    let transcript_ref = create_node_ref();
+    let message_count = create_selector(move || {
+        let active_id = state.active_id.get_clone();
+        state.workspace.with(|workspace| {
+            current_conversation_ref(workspace, &active_id)
+                .map(|conversation| conversation.messages.len())
+                .unwrap_or(0)
+        })
+    });
+
+    create_effect(on(
+        (
+            message_count,
+            state.streamed_text,
+            state.stage,
+            state.is_running,
+        ),
+        move || {
+            message_count.track();
+            state.streamed_text.track();
+            state.stage.track();
+            state.is_running.track();
+            let transcript_ref = transcript_ref;
+            sycamore::web::queue_microtask(move || {
+                if let Some(element) = transcript_ref
+                    .try_get()
+                    .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+                {
+                    element.set_scroll_top(element.scroll_height());
+                }
+            });
+        },
+    ));
+
+    view! {
+        section(r#ref=transcript_ref, class="transcript", aria-label="대화") {
+            Transition(fallback=|| view! {
+                div(class="loading-state", role="status") {
+                    span(class="sonar-loader") {}
+                    p { "작업 공간을 여는 중…" }
+                }
+            }) {
+                (if state.is_loading.get() {
+                    view! {
+                        div(class="loading-state", role="status") {
+                            span(class="sonar-loader") {}
+                            p { "작업 공간을 여는 중…" }
+                        }
+                    }
+                } else if state.active_id.get_clone().is_empty() {
+                    view! { Welcome {} }
+                } else {
+                    view! { ConversationTranscript {} }
+                })
+            }
+        }
+    }
+}
+
+#[component]
+fn ConversationTranscript() -> View {
+    let state = use_context::<AppState>();
+    let active_messages = create_selector(move || {
+        let active_id = state.active_id.get_clone();
+        state.workspace.with(|workspace| {
+            current_conversation_ref(workspace, &active_id)
+                .map(|conversation| conversation.messages.clone())
+                .unwrap_or_default()
+        })
+    });
+    view! {
+        div(class="message-stack") {
+            Keyed(
+                list=active_messages,
+                key=|message| message.id.clone(),
+                view=move |message: Message| view! { MessageView(message=message) }
+            )
+            StreamingMessage {}
+            RetryBanner {}
+        }
+    }
+}
+
+#[component]
+fn Welcome() -> View {
+    view! {
+        section(class="welcome") {
+            div(class="welcome-orbit", aria-hidden="true") {
+                span(class="orbit orbit-one") {}
+                span(class="orbit orbit-two") {}
+                div(class="fugu-core") { (icon("spark")) }
+            }
+            p(class="eyebrow") { "DIVE PAST THE OBVIOUS" }
+            h1 { "질문 아래의 " em { "근거" } "까지." }
+            p(class="welcome-copy") { "Sakana Fugu의 다중 에이전트 추론으로 웹을 교차 검증하고, 답보다 오래 남는 연구 기록을 만듭니다." }
+            div(class="suggestion-grid") {
+                SuggestionButton(
+                    value="이번 주 AI 에이전트 분야의 주요 발표를 출처별로 교차 검증해 줘",
+                    title="이번 주의 흐름",
+                    description="AI 에이전트 주요 발표 교차 검증",
+                    icon_name="globe",
+                    tone="coral"
+                )
+                SuggestionButton(
+                    value="한국과 일본의 생성형 AI 정책을 공식 자료 중심으로 비교해 줘",
+                    title="정책 비교",
+                    description="공식 자료의 차이와 공통점",
+                    icon_name="deep",
+                    tone="blue"
+                )
+                SuggestionButton(
+                    value="이 주장의 찬반 근거를 찾아 신뢰도와 한계를 표로 정리해 줘: ",
+                    title="주장 검증",
+                    description="찬반 근거와 신뢰도 평가",
+                    icon_name="search",
+                    tone="gold"
+                )
+            }
+            p(class="privacy-note") { (icon("key")) " 질문은 Sakana로 전송됩니다. 개인정보·기밀은 입력하지 마세요." }
+        }
+    }
+}
+
+#[derive(Props)]
+struct SuggestionButtonProps {
+    value: &'static str,
+    title: &'static str,
+    description: &'static str,
+    icon_name: &'static str,
+    tone: &'static str,
+}
+
+#[component]
+fn SuggestionButton(props: SuggestionButtonProps) -> View {
+    let state = use_context::<AppState>();
+    view! {
+        button(on:click=move |_| state.composer.set(props.value.into())) {
+            span(class=format!("suggestion-icon {}", props.tone)) { (icon(props.icon_name)) }
+            span { strong { (props.title) } small { (props.description) } }
+        }
+    }
+}
+
+#[derive(Props)]
+struct MessageViewProps {
+    message: Message,
+}
+
+#[component]
+fn MessageView(props: MessageViewProps) -> View {
+    let message = props.message;
+    let is_assistant = message.role == "assistant";
+    let role_class = message.role.clone();
+    let content = message.content.clone();
+    let footer_content = content.clone();
+    let total_tokens = message.usage.as_ref().map(|usage| usage.total_tokens);
+    let status_label = match message.status.as_str() {
+        "failed" => Some("완료되지 않은 부분 답변"),
+        "cancelled" => Some("중단된 부분 답변"),
+        _ => None,
     };
-    spawn_local_scoped(async move {
-        match ipc::command::<_, String>("export_conversation", &ExportArgs { conversation }).await {
-            Ok(_) => show_toast(
-                "Markdown 파일로 내보냈습니다.".into(),
-                "success",
-                toast,
-                toast_kind,
-            ),
-            Err(error) => show_toast(error, "error", toast, toast_kind),
+    let footer = if is_assistant {
+        view! {
+            AnswerFooter(
+                content=footer_content.clone(),
+                sources=message.sources.clone()
+            ) {
+                (total_tokens.map(|total| view! {
+                    small(class="usage") { (format!("총 {total} tokens")) }
+                }).unwrap_or_default())
+            }
+        }
+    } else {
+        View::default()
+    };
+    view! {
+        article(class=format!("message {role_class}")) {
+            div(class="message-meta") {
+                span(class="role-mark") { (if is_assistant { "水" } else { "나" }) }
+                strong { (if is_assistant { "Suisou" } else { "나의 질문" }) }
+                (status_label.map(|label| view! { span(class="partial-label") { (label) } }).unwrap_or_default())
+                time { (format_relative_time(message.created_at)) }
+            }
+            div(class="message-body") { (content) }
+            (footer)
+        }
+    }
+}
+
+#[derive(Props)]
+struct AnswerFooterProps {
+    content: String,
+    sources: Vec<Source>,
+    children: Children,
+}
+
+#[component]
+fn AnswerFooter(props: AnswerFooterProps) -> View {
+    let state = use_context::<AppState>();
+    let source_count = props.sources.len();
+    let content = props.content;
+    let sources = props.sources;
+    let source_action = if source_count > 0 {
+        view! {
+            button(class="text-action", on:click=move |_| {
+                let sources = sources.clone();
+                batch(move || {
+                    state.selected_sources.set(sources);
+                    state.panel.set(Panel::Sources);
+                });
+            }) { (icon("sources")) (format!("출처 {source_count}")) }
+        }
+    } else {
+        View::default()
+    };
+    let usage_view = props.children.call();
+    view! {
+        div(class="answer-footer") {
+            div(class="answer-actions") {
+                button(class="text-action", on:click=move |_| copy_text(state, content.clone())) { (icon("copy")) "복사" }
+                (source_action)
+            }
+            (usage_view)
+        }
+    }
+}
+
+#[component]
+fn StreamingMessage() -> View {
+    let state = use_context::<AppState>();
+    let stage_progress = create_selector(move || stage_index(&state.stage.get_clone()));
+    view! {
+        (if state.is_running.get() {
+            view! {
+                article(class="message assistant streaming", aria-live="polite") {
+                    div(class="message-meta") {
+                        span(class="role-mark sonar") { span {} }
+                        strong { "Suisou" }
+                        span(class="research-stage") { (move || stage_label(&state.stage.get_clone())) }
+                    }
+                    (if state.streamed_text.with(String::is_empty) {
+                        view! {
+                            div(class="research-progress") {
+                                ProgressStep(
+                                    label="연결",
+                                    active=MaybeDyn::from(move || stage_progress.get() >= 0),
+                                    current=MaybeDyn::from(move || state.stage.get_clone() == "connecting")
+                                )
+                                ProgressStep(
+                                    label="검색",
+                                    active=MaybeDyn::from(move || stage_progress.get() >= 1),
+                                    current=MaybeDyn::from(move || state.stage.get_clone() == "searching")
+                                )
+                                ProgressStep(
+                                    label="검토",
+                                    active=MaybeDyn::from(move || stage_progress.get() >= 2),
+                                    current=MaybeDyn::from(move || state.stage.get_clone() == "reasoning")
+                                )
+                                ProgressStep(
+                                    label="작성",
+                                    active=MaybeDyn::from(move || stage_progress.get() >= 3),
+                                    current=MaybeDyn::from(move || state.stage.get_clone() == "writing")
+                                )
+                            }
+                        }
+                    } else {
+                        view! { div(class="message-body") { (state.streamed_text) span(class="typing-cursor") {} } }
+                    })
+                }
+            }
+        } else {
+            View::default()
+        })
+    }
+}
+
+#[derive(Props)]
+struct ProgressStepProps {
+    label: &'static str,
+    active: MaybeDyn<bool>,
+    current: MaybeDyn<bool>,
+}
+
+#[component]
+fn ProgressStep(props: ProgressStepProps) -> View {
+    let active_for_class = props.active.clone();
+    let active_for_icon = props.active;
+    let current = props.current;
+    view! {
+        div(class=move || format!("progress-step {} {}", if active_for_class.get() { "active" } else { "" }, if current.get() { "current" } else { "" })) {
+            span(class="step-dot") { (if active_for_icon.get() { icon("check") } else { View::default() }) }
+            small { (props.label) }
+        }
+    }
+}
+
+#[component]
+fn RetryBanner() -> View {
+    let state = use_context::<AppState>();
+    view! {
+        (if !state.is_running.get() && !state.last_failed_question.with(String::is_empty) {
+            view! {
+                div(class="retry-banner") {
+                    span { "답변 생성이 완료되지 않았습니다." }
+                    button(on:click=move |_| state.retry_question()) { (icon("retry")) "다시 시도" }
+                }
+            }
+        } else {
+            View::default()
+        })
+    }
+}
+
+#[component]
+fn Composer() -> View {
+    let state = use_context::<AppState>();
+    let input_ref = create_node_ref();
+    let can_send = create_selector(move || {
+        !state.composer.with(|value| value.trim().is_empty())
+            && state.storage_writable.get()
+            && !state.is_running.get()
+    });
+    let model = create_memo(move || {
+        state
+            .workspace
+            .with(|workspace| workspace.settings.model.clone())
+    });
+    let reasoning = create_memo(move || {
+        state
+            .workspace
+            .with(|workspace| workspace.settings.reasoning.clone())
+    });
+
+    on_mount(move || {
+        if let Some(input) = input_ref
+            .try_get()
+            .and_then(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = input.focus();
         }
     });
+
+    create_effect(on(state.is_running, move || {
+        if !state.is_running.get_untracked() {
+            let input_ref = input_ref;
+            sycamore::web::queue_microtask(move || {
+                if let Some(input) = input_ref
+                    .try_get()
+                    .and_then(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+                {
+                    let _ = input.focus();
+                }
+            });
+        }
+    }));
+
+    let submit = move |event: SubmitEvent| {
+        event.prevent_default();
+        state.send_question();
+    };
+    let keydown = move |event: KeyboardEvent| {
+        if event.key() == "Escape" && state.panel.get_untracked() != Panel::None {
+            state.close_panel();
+            return;
+        }
+        if event.key() == "Enter" && !event.shift_key() && !event.is_composing() {
+            event.prevent_default();
+            state.send_question();
+        }
+    };
+
+    view! {
+        form(class="composer-wrap", on:submit=submit) {
+            div(class="mode-tabs", role="radiogroup", aria-label="연구 방식") {
+                ModeButton(value="quick", label="빠른 답변", icon_name="spark")
+                ModeButton(value="search", label="웹 검색", icon_name="globe")
+                ModeButton(value="deep", label="딥 리서치", icon_name="deep")
+            }
+            div(class="composer") {
+                label(class="sr-only", r#for="question-input") { "질문 입력" }
+                textarea(
+                    r#ref=input_ref,
+                    id="question-input",
+                    bind:value=state.composer,
+                    on:keydown=keydown,
+                    placeholder="무엇을 깊이 알아볼까요?",
+                    rows="1",
+                    maxlength="20000",
+                    disabled=move || state.is_running.get() || !state.storage_writable.get()
+                ) {}
+                div(class="composer-bottom") {
+                    div(class="model-controls") {
+                        label {
+                            span(class="sr-only") { "Fugu 모델" }
+                            select(on:change=move |event: Event| {
+                                if let Some(value) = select_value(event) {
+                                    state.workspace.update(|workspace| workspace.settings.model = value);
+                                    state.persist_workspace();
+                                }
+                            }) {
+                                option(value="fugu", selected=move || model.get_clone() == "fugu") { "Fugu" }
+                                option(value="fugu-ultra", selected=move || model.get_clone() != "fugu") { "Fugu Ultra" }
+                            }
+                        }
+                        span(class="control-divider") {}
+                        label {
+                            span(class="sr-only") { "추론 강도" }
+                            select(on:change=move |event: Event| {
+                                if let Some(value) = select_value(event) {
+                                    state.workspace.update(|workspace| workspace.settings.reasoning = value);
+                                    state.persist_workspace();
+                                }
+                            }) {
+                                option(value="high", selected=move || reasoning.get_clone() == "high") { "High" }
+                                option(value="xhigh", selected=move || reasoning.get_clone() == "xhigh") { "X-High" }
+                                option(value="max", selected=move || reasoning.get_clone() == "max") { "Max" }
+                            }
+                        }
+                    }
+                    (if state.is_running.get() {
+                        view! { button(class="send-button stop", r#type="button", aria-label="답변 생성 중지", on:click=move |_| state.cancel_request()) { (icon("stop")) } }
+                    } else {
+                        view! { button(class="send-button", r#type="submit", aria-label="질문 보내기", disabled=move || !can_send.get()) { (icon("send")) } }
+                    })
+                }
+            }
+            p(class="composer-hint") { "Enter로 전송 · Shift+Enter로 줄바꿈 · 출처는 반드시 원문에서 다시 확인하세요" }
+        }
+    }
+}
+
+#[derive(Props)]
+struct ModeButtonProps {
+    value: &'static str,
+    label: &'static str,
+    icon_name: &'static str,
+}
+
+#[component]
+fn ModeButton(props: ModeButtonProps) -> View {
+    let state = use_context::<AppState>();
+    let selected = create_selector(move || {
+        state
+            .workspace
+            .with(|workspace| workspace.settings.last_mode == props.value)
+    });
+    view! {
+        button(
+            r#type="button",
+            role="radio",
+            aria-checked=move || selected.get().to_string(),
+            class=move || if selected.get() { "active" } else { "" },
+            on:click=move |_| {
+                state.workspace.update(|workspace| workspace.settings.last_mode = props.value.into());
+                state.persist_workspace();
+            }
+        ) { (icon(props.icon_name)) (props.label) }
+    }
+}
+
+#[component]
+fn SourcesPanel() -> View {
+    let state = use_context::<AppState>();
+    let sources_empty = create_selector(move || state.selected_sources.with(Vec::is_empty));
+    view! {
+        aside(class=move || format!("sources-panel {}", if state.panel.get() == Panel::Sources { "visible" } else { "" }), role="dialog", aria-modal="true", aria-hidden=move || (state.panel.get() != Panel::Sources).to_string(), aria-label="출처") {
+            div(class="panel-header") {
+                div { small { "EVIDENCE DECK" } h2 { "검색·인용 출처" } }
+                button(class="icon-button", aria-label="출처 패널 닫기", on:click=move |_| state.close_panel()) { (icon("close")) }
+            }
+            (if sources_empty.get() {
+                view! {
+                    div(class="sources-empty") {
+                        span(class="source-rings") { (icon("sources")) }
+                        h3 { "아직 출처가 없습니다" }
+                        p { "웹 검색이나 딥 리서치로 질문하면 Fugu가 확인한 근거를 여기에 모읍니다." }
+                    }
+                }
+            } else {
+                view! {
+                    div(class="source-list") {
+                        Indexed(
+                            list=state.selected_sources,
+                            view=move |source: Source| view! { SourceView(source=source) }
+                        )
+                    }
+                }
+            })
+        }
+    }
+}
+
+#[derive(Props)]
+struct SourceViewProps {
+    source: Source,
+}
+
+#[component]
+fn SourceView(props: SourceViewProps) -> View {
+    let state = use_context::<AppState>();
+    let source = props.source;
+    let index = state
+        .selected_sources
+        .with_untracked(|sources| sources.iter().position(|item| item.id == source.id))
+        .unwrap_or(0)
+        + 1;
+    let url = source.url;
+    let snippet = if source.snippet.is_empty() {
+        View::default()
+    } else {
+        view! { p { (source.snippet) } }
+    };
+    view! {
+        article(class="source-card") {
+            div(class="source-index") { (format!("{index:02}")) }
+            div(class="source-content") {
+                small { (source.domain) }
+                h3 { (source.title) }
+                (snippet)
+                button(on:click=move |_| open_url(state, url.clone())) { "원문 열기" (icon("external")) }
+            }
+        }
+    }
+}
+
+#[component]
+fn SettingsPanel() -> View {
+    let state = use_context::<AppState>();
+    let has_active_conversation = create_selector(move || !state.active_id.with(String::is_empty));
+    view! {
+        aside(class=move || format!("settings-panel {}", if state.panel.get() == Panel::Settings { "visible" } else { "" }), role="dialog", aria-modal="true", aria-hidden=move || (state.panel.get() != Panel::Settings).to_string(), aria-label="설정") {
+            div(class="panel-header") {
+                div { small { "CONTROL ROOM" } h2 { "설정" } }
+                button(class="icon-button", aria-label="설정 닫기", on:click=move |_| state.close_panel()) { (icon("close")) }
+            }
+            div(class="settings-content") {
+                section(class="setting-section") {
+                    div(class="setting-title") { span(class="setting-number") { "01" } div { h3 { "Sakana API" } p { "키는 운영체제 보안 저장소에 보관되며 앱 시작 시 자동 복원됩니다." } } }
+                    (if state.key_configured.get() {
+                        view! {
+                            div(class="key-connected") {
+                                span { (icon("check")) }
+                                div {
+                                    strong { "Fugu 연결 준비 완료" }
+                                    small { (if state.connection_message.with(String::is_empty) {
+                                        "이 기기의 보안 저장소에 저장됨".into()
+                                    } else {
+                                        state.connection_message.get_clone()
+                                    }) }
+                                }
+                                button(on:click=move |_| state.clear_key()) { "연결 해제" }
+                            }
+                        }
+                    } else {
+                        view! {
+                            form(class="key-form", on:submit=move |event: SubmitEvent| {
+                                event.prevent_default();
+                                state.connect_key();
+                            }) {
+                                label(r#for="api-key") { "Sakana API key" }
+                                div(class="key-input-row") {
+                                    input(id="api-key", r#type="password", bind:value=state.key_input, autocomplete="off", placeholder="키 붙여넣기", disabled=state.key_busy)
+                                    button(r#type="submit", disabled=move || state.key_busy.get() || state.key_input.with(|value| value.trim().is_empty())) {
+                                        (move || if state.key_busy.get() { "확인 중…" } else { "연결" })
+                                    }
+                                }
+                                p { "키는 작업 공간 파일·브라우저 저장소·로그가 아닌 운영체제 보안 저장소에 기록됩니다." }
+                            }
+                        }
+                    })
+                }
+
+                section(class="setting-section") {
+                    div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "화면" } p { "환경과 선호에 맞는 명암을 선택합니다." } } }
+                    div(class="segmented-control") {
+                        ThemeButton(value="system", label="시스템")
+                        ThemeButton(value="light", label="라이트")
+                        ThemeButton(value="dark", label="다크")
+                    }
+                }
+
+                section(class="setting-section caution") {
+                    div(class="setting-title") { span(class="setting-number") { "03" } div { h3 { "데이터와 개인정보" } p { "대화 기록은 이 기기에 저장되지만, 질문과 문맥은 답변 생성을 위해 Sakana로 전송됩니다." } } }
+                    ul {
+                        li { "개인정보·건강·금융·회사 기밀을 입력하지 마세요." }
+                        li { "Sakana의 보존·학습 설정과 약관을 배포 전에 확인하세요." }
+                        li { "기기 간 동기화는 아직 제공하지 않습니다." }
+                    }
+                    button(class="policy-link", on:click=move |_| open_url(state, "https://console.sakana.ai/privacy-policy".into())) { "Sakana 개인정보 정책" (icon("external")) }
+                }
+
+                (if has_active_conversation.get() {
+                    view! {
+                        section(class="setting-section conversation-tools") {
+                            h3 { "현재 대화" }
+                            div(class="tool-row") {
+                                button(on:click=move |_| state.toggle_pin()) { (icon("pin")) "고정 전환" }
+                                button(on:click=move |_| state.export_current()) { (icon("export")) "Markdown 내보내기" }
+                                button(class="danger", disabled=state.is_running, on:click=move |_| state.delete_conversation()) { (icon("trash")) "삭제" }
+                            }
+                        }
+                    }
+                } else {
+                    View::default()
+                })
+            }
+        }
+    }
+}
+
+#[derive(Props)]
+struct ThemeButtonProps {
+    value: &'static str,
+    label: &'static str,
+}
+
+#[component]
+fn ThemeButton(props: ThemeButtonProps) -> View {
+    let state = use_context::<AppState>();
+    let selected = create_selector(move || {
+        state
+            .workspace
+            .with(|workspace| workspace.settings.theme == props.value)
+    });
+    view! {
+        button(
+            class=move || if selected.get() { "active" } else { "" },
+            on:click=move |_| {
+                update_theme(props.value);
+                state.workspace.update(|workspace| workspace.settings.theme = props.value.into());
+                state.persist_workspace();
+            }
+        ) { (props.label) }
+    }
+}
+
+#[component]
+fn OverlayLayer() -> View {
+    let state = use_context::<AppState>();
+    let has_panel = create_selector(move || state.panel.get() != Panel::None);
+    let has_toast = create_selector(move || !state.toast.with(String::is_empty));
+    view! {
+        (if has_panel.get() {
+            view! { button(class="scrim", aria-label="패널 닫기", on:click=move |_| state.close_panel()) {} }
+        } else {
+            View::default()
+        })
+        (if has_toast.get() {
+            view! {
+                div(class=move || format!("toast {}", state.toast_kind.get_clone()), role="status", aria-live="polite") {
+                    span { (state.toast) }
+                    button(aria-label="알림 닫기", on:click=move |_| state.toast.set(String::new())) { (icon("close")) }
+                }
+            }
+        } else {
+            View::default()
+        })
+    }
 }

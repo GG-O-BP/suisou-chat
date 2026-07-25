@@ -12,6 +12,17 @@ extern "C" {
     async fn listen_raw(event: &str, handler: &js_sys::Function) -> Result<JsValue, JsValue>;
 }
 
+pub struct EventListener {
+    unlisten: js_sys::Function,
+    _handler: Closure<dyn FnMut(JsValue)>,
+}
+
+impl EventListener {
+    pub fn unlisten(self) {
+        let _ = self.unlisten.call0(&JsValue::UNDEFINED);
+    }
+}
+
 #[derive(Deserialize)]
 struct EventEnvelope<T> {
     payload: T,
@@ -39,7 +50,7 @@ where
     Ok(())
 }
 
-pub async fn listen<T, F>(event: &str, mut callback: F) -> Result<(), String>
+pub async fn listen<T, F>(event: &str, mut callback: F) -> Result<EventListener, String>
 where
     T: DeserializeOwned + 'static,
     F: FnMut(T) + 'static,
@@ -49,11 +60,15 @@ where
             callback(envelope.payload);
         }
     });
-    listen_raw(event, closure.as_ref().unchecked_ref())
+    let unlisten = listen_raw(event, closure.as_ref().unchecked_ref())
         .await
         .map_err(js_error)?;
-    closure.forget();
-    Ok(())
+    Ok(EventListener {
+        unlisten: unlisten
+            .dyn_into::<js_sys::Function>()
+            .map_err(|_| "이벤트 정리 함수를 읽지 못했습니다.".to_string())?,
+        _handler: closure,
+    })
 }
 
 fn js_error(error: JsValue) -> String {

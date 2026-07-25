@@ -3,7 +3,13 @@ target = "./index.html"
 dist = "dist"
 public_url = "/"
 filehash = true
-minify = "on_release"
+# Trunk 0.21.14's bundled minify-js 0.5.6 cannot parse the ESM emitted by
+# wasm-bindgen 0.2.126. A post-build hook below minifies that module with Bun.
+minify = "never"
+
+[[hooks]]
+stage = "post_build"
+command = "./scripts/minify-wasm-bindgen-js.sh"
 
 [watch]
 ignore = ["./src-tauri"]
