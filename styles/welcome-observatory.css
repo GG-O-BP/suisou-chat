@@ -1,0 +1,268 @@
+/* Welcome observatory
+   The opening screen no longer explains itself with campaign copy. The
+   observation window and its live connection console carry the identity. */
+
+.welcome {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  gap: 1.15rem;
+}
+
+.welcome-observatory {
+  position: relative;
+  display: grid;
+  width: min(100%, 680px);
+  grid-template-columns: 54px minmax(290px, 390px) 54px;
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+}
+
+.observatory-datum {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(5rem, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  width: min(100%, 520px);
+  margin: 0 auto 1.35rem;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.45rem;
+  letter-spacing: 0.13em;
+}
+
+.observatory-datum i {
+  height: 1px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      var(--line-strong) 0 7px,
+      transparent 7px 12px
+    );
+}
+
+.welcome-observatory .observation-tank {
+  position: relative;
+  width: min(36vw, 390px);
+  min-width: 290px;
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: center;
+}
+
+.welcome-observatory .welcome-status {
+  position: absolute;
+  right: -0.8rem;
+  bottom: 1.9rem;
+  z-index: 5;
+  width: min(320px, 46vw);
+  max-width: none;
+  min-height: 64px;
+  padding: 0.7rem 0.85rem;
+  color: var(--instrument-ink);
+  background:
+    linear-gradient(90deg, rgba(132, 222, 205, 0.07), transparent 42%),
+    rgba(5, 39, 41, 0.9);
+  border: 1px solid rgba(164, 226, 213, 0.2);
+  border-left: 2px solid var(--current);
+  box-shadow: 0 16px 38px rgba(2, 28, 30, 0.2);
+  backdrop-filter: blur(16px);
+}
+
+.welcome-observatory .welcome-status::before {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 2.4rem;
+  height: 1px;
+  content: "";
+  background: linear-gradient(90deg, transparent, var(--current));
+}
+
+.welcome-observatory .welcome-status small {
+  color: rgba(218, 243, 235, 0.48);
+}
+
+.welcome-observatory .welcome-status strong {
+  color: #eefaf5;
+  font-size: 0.75rem;
+}
+
+.welcome-observatory .welcome-status button {
+  color: #f4a28d;
+}
+
+.welcome-observatory .status-code {
+  color: #8de0cf;
+}
+
+.observatory-depth-scale {
+  display: grid;
+  grid-column: 3;
+  grid-row: 2;
+  height: 62%;
+  align-content: space-between;
+  justify-items: end;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 0.43rem;
+  letter-spacing: 0.08em;
+}
+
+.observatory-depth-scale i {
+  width: 28px;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.welcome .suggestion-deck {
+  width: min(100%, 920px);
+  justify-self: center;
+}
+
+.welcome .privacy-note {
+  width: min(100%, 920px);
+  justify-self: center;
+  justify-content: flex-end;
+}
+
+@media (max-width: 860px) {
+  .welcome {
+    width: min(760px, calc(100% - 2rem));
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .welcome-observatory {
+    grid-template-columns: 42px minmax(260px, 340px) 42px;
+  }
+
+  .welcome-observatory .observation-tank {
+    width: min(44vw, 340px);
+  }
+
+  .welcome-observatory .welcome-status {
+    right: -1.5rem;
+    width: min(300px, 52vw);
+  }
+}
+
+@media (max-width: 620px) {
+  .welcome {
+    position: relative;
+    display: grid;
+    width: calc(100% - 1.3rem);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    gap: 0.85rem;
+    padding: 1rem 0 0.85rem;
+  }
+
+  .welcome-observatory {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  .observatory-datum {
+    width: calc(100% - 1rem);
+    margin-bottom: 0.7rem;
+  }
+
+  .welcome-observatory .observation-tank {
+    position: relative;
+    top: auto;
+    right: auto;
+    display: block;
+    width: min(54vw, 205px);
+    min-width: 0;
+    grid-column: 1;
+    grid-row: 2;
+    opacity: 1;
+  }
+
+  .welcome-observatory .tank-glass {
+    inset: 21px;
+  }
+
+  .welcome-observatory .tank-rim::before {
+    inset: 8px;
+  }
+
+  .welcome-observatory .tank-rim::after {
+    display: block;
+    inset: 14px;
+  }
+
+  .welcome-observatory .rim-mark {
+    display: block;
+  }
+
+  .welcome-observatory .mark-east,
+  .welcome-observatory .mark-west {
+    display: none;
+  }
+
+  .welcome-observatory .tank-reticle,
+  .welcome-observatory .tank-telemetry {
+    display: flex;
+  }
+
+  .welcome-observatory .tank-reticle {
+    display: grid;
+    width: 44px;
+    height: 44px;
+  }
+
+  .welcome-observatory .tank-reticle::before {
+    width: 62px;
+  }
+
+  .welcome-observatory .tank-reticle::after {
+    height: 62px;
+  }
+
+  .welcome-observatory .tank-telemetry {
+    right: 5%;
+    bottom: 8%;
+    left: 5%;
+    padding: 0.28rem 0.35rem;
+    font-size: 0.34rem;
+  }
+
+  .welcome-observatory .welcome-status {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    width: calc(100% - 0.5rem);
+    min-height: 58px;
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: center;
+    margin-top: -0.2rem;
+  }
+
+  .welcome-observatory .welcome-status::before {
+    top: auto;
+    right: 50%;
+    bottom: 100%;
+    width: 1px;
+    height: 1.2rem;
+    background: linear-gradient(transparent, var(--current));
+  }
+
+  .observatory-depth-scale {
+    display: none;
+  }
+
+  .welcome .suggestion-deck,
+  .welcome .privacy-note {
+    width: 100%;
+  }
+
+  .welcome .privacy-note {
+    justify-content: flex-start;
+  }
+}
