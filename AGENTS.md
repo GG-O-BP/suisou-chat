@@ -18,7 +18,7 @@ env -u NO_COLOR trunk build --release
 env -u NO_COLOR cargo tauri build --no-bundle
 ```
 
-As of 2026-07-25: strict Clippy passes, 24 workspace tests pass, Trunk release output is about 540 KiB, the Linux native executable builds, and an arm64 Android debug APK builds successfully. Trunk 0.21.14 is exposed at `~/.local/bin/trunk` in this environment. This shell exports `NO_COLOR=1`, which breaks Trunk 0.21.14's `--no-color` parsing; run Trunk/Tauri builds with `env -u NO_COLOR` (the project `.codex/config.toml` already strips `NO_COLOR` for Codex-run subprocesses).
+As of 2026-07-25: strict Clippy passes, 24 workspace tests pass, the Linux native executable builds, and an arm64 Android debug APK builds successfully. Trunk 0.21.14 is exposed at `~/.local/bin/trunk` in this environment. This shell exports `NO_COLOR=1`, which breaks Trunk 0.21.14's `--no-color` parsing; run Trunk/Tauri builds with `env -u NO_COLOR` (the project `.codex/config.toml` already strips `NO_COLOR` for Codex-run subprocesses).
 
 ## Constraints and release checks
 
@@ -32,7 +32,11 @@ As of 2026-07-25: strict Clippy passes, 24 workspace tests pass, Trunk release o
   asset brief for a user-supplied/local generator; do not block the design task.
 - Android SDK 36, Build Tools 35.0.0, NDK 29.0.13846066, JDK 21, and all four Rust Android targets are installed. Use `source scripts/android-env.sh` or the Android build scripts so Tauri sees them. Generated package identity follows Tauri identifier `com.ggobp.suisou-chat` -> namespace `com.ggobp.suisou_chat`.
 - Cloud/device sync, attachments, voice, team sharing, and background research require a backend and explicit privacy/security design; do not imply these exist.
-- Trunk currently emits a non-fatal minifier warning for wasm-bindgen JavaScript, but release builds succeed.
+- Keep Trunk's generated JavaScript unchanged after it calculates file hashes
+  and SRI. A post-build minifier previously changed the module without updating
+  `index.html`, causing Android WebView to reject it and show only the CSS
+  background. JavaScript minification is disabled until it can run before
+  Trunk's final hashing step.
 - Android secure credential storage initializes its NDK context from the generated `MainActivity`. Do not rerun `cargo tauri android init` without preserving that customization.
 
 ## Aquarium visual direction

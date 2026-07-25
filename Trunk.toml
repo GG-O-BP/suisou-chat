@@ -3,13 +3,13 @@ target = "./index.html"
 dist = "dist"
 public_url = "/"
 filehash = true
-# Trunk 0.21.14's bundled minify-js 0.5.6 cannot parse the ESM emitted by
-# wasm-bindgen 0.2.126. A post-build hook below minifies that module with Bun.
+# Trunk computes file names and SRI before post-build hooks run. Keep the
+# generated module untouched so the integrity recorded in index.html always
+# matches the JavaScript shipped in desktop and mobile bundles.
+#
+# Trunk 0.21.14's bundled minifier cannot parse the ESM emitted by the current
+# wasm-bindgen version, so JavaScript minification stays disabled for now.
 minify = "never"
-
-[[hooks]]
-stage = "post_build"
-command = "./scripts/minify-wasm-bindgen-js.sh"
 
 [watch]
 ignore = ["./src-tauri"]
