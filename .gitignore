@@ -1,0 +1,43 @@
+# Rust and frontend build output
+/dist/
+/target/
+
+# Temporary files and logs
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+
+# Patch / merge conflict leftovers
+*.orig
+*.rej
+
+# IDE files. Keep the repository-wide extension recommendations.
+.idea/
+.kotlin/
+/.vscode/*
+!/.vscode/extensions.json
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local environment and Android signing configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+local.properties
+key.properties
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Built Android packages
+*.apk
+*.aab
+*.apks

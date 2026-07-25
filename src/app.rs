@@ -369,7 +369,14 @@ fn send_question(
                 stage.set(status.into());
                 streamed_text.set(String::new());
                 last_failed_question.set(question);
+                let mut error = error;
                 if error.contains("인증") || error.contains("API 키") {
+                    if let Err(clear_error) =
+                        ipc::command_unit("clear_api_key", &EmptyArgs {}).await
+                    {
+                        error = format!("{error} {clear_error}");
+                        let _ = ipc::command_unit("forget_api_key", &EmptyArgs {}).await;
+                    }
                     key_configured.set(false);
                     panel.set(Panel::Settings);
                 }
@@ -434,11 +441,18 @@ pub fn App() -> View {
                 selected_sources.set(source_list(&response.workspace, &first_id));
                 active_id.set(first_id);
                 key_configured.set(response.key_configured);
+                if response.key_configured {
+                    connection_message.set("보안 저장소에서 자동 복원됨".into());
+                }
                 storage_label.set(response.storage_label);
                 storage_writable.set(response.storage_writable);
                 workspace.set(response.workspace);
-                if let Some(notice) = response.recovery_notice {
-                    show_toast(notice, "warning", toast, toast_kind);
+                let notices = [response.recovery_notice, response.credential_notice]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+                if !notices.is_empty() {
+                    show_toast(notices.join(" "), "warning", toast, toast_kind);
                 }
             }
             Err(error) => show_toast(error, "error", toast, toast_kind),
@@ -801,12 +815,12 @@ pub fn App() -> View {
                 }
                 div(class="settings-content") {
                     section(class="setting-section") {
-                        div(class="setting-title") { span(class="setting-number") { "01" } div { h3 { "Sakana API" } p { "키는 네이티브 메모리에만 유지되며 앱 종료 시 사라집니다." } } }
+                        div(class="setting-title") { span(class="setting-number") { "01" } div { h3 { "Sakana API" } p { "키는 운영체제 보안 저장소에 보관되며 앱 시작 시 자동 복원됩니다." } } }
                         (if key_configured.get() {
                             view! {
                                 div(class="key-connected") {
                                     span { (icon("check")) }
-                                    div { strong { "Fugu 연결 준비 완료" } small { (if connection_message.get_clone().is_empty() { "세션 전용 키가 설정됨".into() } else { connection_message.get_clone() }) } }
+                                    div { strong { "Fugu 연결 준비 완료" } small { (if connection_message.get_clone().is_empty() { "이 기기의 보안 저장소에 저장됨".into() } else { connection_message.get_clone() }) } }
                                     button(on:click=move |_| clear_key(key_configured, connection_message, toast, toast_kind)) { "연결 해제" }
                                 }
                             }
@@ -821,7 +835,7 @@ pub fn App() -> View {
                                         input(id="api-key", r#type="password", bind:value=key_input, autocomplete="off", placeholder="키 붙여넣기", disabled=key_busy.get())
                                         button(r#type="submit", disabled=move || key_busy.get() || key_input.get_clone().trim().is_empty()) { (move || if key_busy.get() { "확인 중…" } else { "연결" }) }
                                     }
-                                    p { "키는 파일·브라우저 저장소·로그에 기록하지 않습니다." }
+                                    p { "키는 작업 공간 파일·브라우저 저장소·로그가 아닌 운영체제 보안 저장소에 기록됩니다." }
                                 }
                             }
                         })
@@ -1124,11 +1138,8 @@ fn connect_key(
     key_input.set(String::new());
     key_busy.set(true);
     spawn_local_scoped(async move {
-        let set_result = ipc::command_unit("set_api_key", &ApiKeyArgs { api_key }).await;
-        let result = match set_result {
-            Ok(()) => ipc::command::<_, ConnectionInfo>("verify_connection", &EmptyArgs {}).await,
-            Err(error) => Err(error),
-        };
+        let result =
+            ipc::command::<_, ConnectionInfo>("connect_api_key", &ApiKeyArgs { api_key }).await;
         key_busy.set(false);
         match result {
             Ok(info) => {
@@ -1140,16 +1151,13 @@ fn connect_key(
                 };
                 connection_message.set(format!("{}{model_note}", info.message));
                 show_toast(
-                    "Sakana API 연결을 확인했습니다.".into(),
+                    "Sakana API 연결을 확인하고 키를 안전하게 저장했습니다.".into(),
                     "success",
                     toast,
                     toast_kind,
                 );
             }
-            Err(error) => {
-                let _ = ipc::command_unit("clear_api_key", &EmptyArgs {}).await;
-                show_toast(error, "error", toast, toast_kind);
-            }
+            Err(error) => show_toast(error, "error", toast, toast_kind),
         }
     });
 }
@@ -1166,13 +1174,17 @@ fn clear_key(
                 key_configured.set(false);
                 connection_message.set(String::new());
                 show_toast(
-                    "API 키를 메모리에서 제거했습니다.".into(),
+                    "API 키를 메모리와 운영체제 보안 저장소에서 제거했습니다.".into(),
                     "success",
                     toast,
                     toast_kind,
                 );
             }
-            Err(error) => show_toast(error, "error", toast, toast_kind),
+            Err(error) => {
+                key_configured.set(false);
+                connection_message.set(String::new());
+                show_toast(error, "error", toast, toast_kind);
+            }
         }
     });
 }

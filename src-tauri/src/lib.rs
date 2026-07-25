@@ -1,3 +1,4 @@
+mod credentials;
 mod fugu;
 mod models;
 mod storage;
@@ -27,6 +28,7 @@ fn bootstrap(state: State<'_, AppState>) -> BootstrapResponse {
     BootstrapResponse {
         workspace: loaded.workspace,
         key_configured: state.fugu.has_key(),
+        credential_notice: state.fugu.credential_notice(),
         recovery_notice,
         storage_label: if storage_writable {
             "이 기기에만 저장됨".into()
@@ -57,8 +59,11 @@ fn save_workspace(mut workspace: Workspace, state: State<'_, AppState>) -> Resul
 }
 
 #[tauri::command]
-fn set_api_key(api_key: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.fugu.set_key(api_key)
+async fn connect_api_key(
+    api_key: String,
+    state: State<'_, AppState>,
+) -> Result<ConnectionInfo, String> {
+    state.fugu.connect(api_key).await
 }
 
 #[tauri::command]
@@ -67,8 +72,8 @@ fn clear_api_key(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn verify_connection(state: State<'_, AppState>) -> Result<ConnectionInfo, String> {
-    state.fugu.verify().await
+fn forget_api_key(state: State<'_, AppState>) {
+    state.fugu.forget_key();
 }
 
 #[tauri::command]
@@ -137,10 +142,9 @@ pub fn run() {
             let window_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Suisou — AI Research Companion")
                 .inner_size(1180.0, 780.0)
-                .min_inner_size(360.0, 560.0)
-                .center();
+                .min_inner_size(360.0, 560.0);
             #[cfg(desktop)]
-            let window_builder = window_builder.enable_clipboard_access();
+            let window_builder = window_builder.center().enable_clipboard_access();
             window_builder
                 .build()
                 .map_err(|error| format!("앱 창 생성 실패: {error}"))?;
@@ -163,9 +167,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             save_workspace,
-            set_api_key,
+            connect_api_key,
             clear_api_key,
-            verify_connection,
+            forget_api_key,
             run_research,
             cancel_research,
             open_external,
@@ -173,4 +177,16 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Suisou");
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_ggobp_suisou_1chat_MainActivity_initializeApiKeyStore(
+    env: jni::JNIEnv,
+    activity: jni::objects::JObject,
+    context: jni::objects::JObject,
+) {
+    android_native_keyring_store::Java_io_crates_keyring_Keyring_00024Companion_initializeNdkContext(
+        env, activity, context,
+    );
 }

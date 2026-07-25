@@ -1,3 +1,4 @@
+use crate::credentials::{ApiKeyStore, SystemApiKeyStore, UnavailableApiKeyStore};
 use crate::models::{
     validate_research_request, ConnectionInfo, ResearchEvent, ResearchRequest, ResearchResponse,
     Source, Usage,
@@ -6,7 +7,7 @@ use futures_util::StreamExt;
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, WebviewWindow};
 use tokio_util::sync::CancellationToken;
@@ -22,63 +23,161 @@ const MAX_ANSWER_BYTES: usize = 4 * 1024 * 1024;
 pub struct FuguRuntime {
     client: Client,
     api_key: Mutex<Option<Zeroizing<String>>>,
+    api_key_store: Arc<dyn ApiKeyStore>,
+    key_update: Mutex<()>,
+    credential_notice: Mutex<Option<String>>,
     active: Mutex<HashMap<String, CancellationToken>>,
 }
 
 impl FuguRuntime {
     pub fn new() -> Result<Self, String> {
+        let (api_key_store, initialization_notice): (Arc<dyn ApiKeyStore>, Option<String>) =
+            match SystemApiKeyStore::new() {
+                Ok(store) => (Arc::new(store), None),
+                Err(error) => (
+                    Arc::new(UnavailableApiKeyStore::new(error.clone())),
+                    Some(error),
+                ),
+            };
+        Self::new_with_store(api_key_store, initialization_notice)
+    }
+
+    fn new_with_store(
+        api_key_store: Arc<dyn ApiKeyStore>,
+        initialization_notice: Option<String>,
+    ) -> Result<Self, String> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(20))
             .timeout(Duration::from_secs(2 * 60 * 60))
             .user_agent("Suisou/0.1")
             .build()
             .map_err(|error| format!("HTTP 클라이언트 초기화 실패: {error}"))?;
+
+        let mut credential_notice = initialization_notice;
+        let api_key = if credential_notice.is_none() {
+            match api_key_store.load() {
+                Ok(Some(api_key)) if valid_key(api_key.as_str()) => Some(api_key),
+                Ok(Some(_)) => {
+                    credential_notice = Some(if api_key_store.delete().is_ok() {
+                        "저장된 API 키 형식이 올바르지 않아 보안 저장소에서 제거했습니다.".into()
+                    } else {
+                        "저장된 API 키 형식이 올바르지 않으며 보안 저장소에서도 제거하지 못했습니다. 보안 저장소를 잠금 해제한 뒤 다시 연결 해제해 주세요."
+                                .into()
+                    });
+                    None
+                }
+                Ok(None) => None,
+                Err(error) => {
+                    credential_notice = Some(error);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             client,
-            api_key: Mutex::new(None),
+            api_key: Mutex::new(api_key),
+            api_key_store,
+            key_update: Mutex::new(()),
+            credential_notice: Mutex::new(credential_notice),
             active: Mutex::new(HashMap::new()),
         })
     }
 
     pub fn has_key(&self) -> bool {
+        let Ok(_update) = self.key_update.lock() else {
+            return false;
+        };
         self.api_key
             .lock()
             .map(|key| key.is_some())
             .unwrap_or(false)
     }
 
-    pub fn set_key(&self, key: String) -> Result<(), String> {
-        let key = key.trim();
-        if key.len() < 12 || key.len() > 512 || key.chars().any(char::is_whitespace) {
-            return Err("API 키 형식이 올바르지 않습니다.".into());
-        }
+    pub fn credential_notice(&self) -> Option<String> {
+        self.credential_notice
+            .lock()
+            .ok()
+            .and_then(|notice| notice.clone())
+    }
+
+    pub async fn connect(&self, key: String) -> Result<ConnectionInfo, String> {
+        let key = normalize_key(key)?;
+        let connection = self.verify_key(key.as_str()).await?;
+        self.store_key(key)?;
+        Ok(connection)
+    }
+
+    fn store_key(&self, key: Zeroizing<String>) -> Result<(), String> {
+        let _update = self
+            .key_update
+            .lock()
+            .map_err(|_| "API 키 저장 작업을 잠글 수 없습니다.".to_string())?;
         let mut stored = self
             .api_key
             .lock()
             .map_err(|_| "API 키 저장소를 잠글 수 없습니다.".to_string())?;
-        *stored = Some(Zeroizing::new(key.to_owned()));
+        if let Err(error) = self.api_key_store.save(key.as_str()) {
+            self.set_credential_notice(Some(error.clone()));
+            return Err(error);
+        }
+        *stored = Some(key);
+        self.set_credential_notice(None);
         Ok(())
     }
 
     pub fn clear_key(&self) -> Result<(), String> {
-        {
-            let mut stored = self
-                .api_key
-                .lock()
-                .map_err(|_| "API 키 저장소를 잠글 수 없습니다.".to_string())?;
-            *stored = None;
-        }
+        let _update = self
+            .key_update
+            .lock()
+            .map_err(|_| "API 키 삭제 작업을 잠글 수 없습니다.".to_string())?;
         let active = self
             .active
             .lock()
             .map_err(|_| "요청 상태를 잠글 수 없습니다.".to_string())?;
+        let mut stored = self
+            .api_key
+            .lock()
+            .map_err(|_| "API 키 저장소를 잠글 수 없습니다.".to_string())?;
+        *stored = None;
         for cancellation in active.values() {
             cancellation.cancel();
         }
-        Ok(())
+        drop(stored);
+        drop(active);
+        match self.api_key_store.delete() {
+            Ok(()) => {
+                self.set_credential_notice(None);
+                Ok(())
+            }
+            Err(error) => {
+                self.set_credential_notice(Some(error.clone()));
+                Err(error)
+            }
+        }
+    }
+
+    pub fn forget_key(&self) {
+        let Ok(_update) = self.key_update.lock() else {
+            return;
+        };
+        if let Ok(mut stored) = self.api_key.lock() {
+            *stored = None;
+        }
+        if let Ok(active) = self.active.lock() {
+            for cancellation in active.values() {
+                cancellation.cancel();
+            }
+        }
     }
 
     fn key(&self) -> Result<Zeroizing<String>, String> {
+        let _update = self
+            .key_update
+            .lock()
+            .map_err(|_| "API 키 저장 작업을 잠글 수 없습니다.".to_string())?;
         self.api_key
             .lock()
             .map_err(|_| "API 키 저장소를 잠글 수 없습니다.".to_string())?
@@ -86,12 +185,11 @@ impl FuguRuntime {
             .ok_or_else(|| "Sakana API 키를 먼저 연결해 주세요.".to_string())
     }
 
-    pub async fn verify(&self) -> Result<ConnectionInfo, String> {
-        let key = self.key()?;
+    async fn verify_key(&self, key: &str) -> Result<ConnectionInfo, String> {
         let response = self
             .client
             .get(format!("{API_ROOT}/models"))
-            .bearer_auth(key.as_str())
+            .bearer_auth(key)
             .send()
             .await
             .map_err(network_error)?;
@@ -128,6 +226,12 @@ impl FuguRuntime {
             message: "Sakana API에 안전하게 연결되었습니다.".into(),
             models,
         })
+    }
+
+    fn set_credential_notice(&self, value: Option<String>) {
+        if let Ok(mut notice) = self.credential_notice.lock() {
+            *notice = value;
+        }
     }
 
     pub fn cancel(&self, request_id: &str) -> Result<bool, String> {
@@ -639,6 +743,19 @@ fn clean_remote_error(message: &str) -> String {
     truncate_chars(message.trim(), 300)
 }
 
+fn normalize_key(key: String) -> Result<Zeroizing<String>, String> {
+    let key = Zeroizing::new(key);
+    let trimmed = key.trim();
+    if !valid_key(trimmed) {
+        return Err("API 키 형식이 올바르지 않습니다.".into());
+    }
+    Ok(Zeroizing::new(trimmed.to_owned()))
+}
+
+fn valid_key(key: &str) -> bool {
+    (12..=512).contains(&key.len()) && !key.chars().any(char::is_whitespace)
+}
+
 fn truncate_chars(value: &str, maximum: usize) -> String {
     let mut chars = value.chars();
     let truncated = chars.by_ref().take(maximum).collect::<String>();
@@ -659,6 +776,54 @@ fn now_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct MemoryApiKeyStore {
+        value: Mutex<Option<String>>,
+        fail_load: AtomicBool,
+        fail_save: AtomicBool,
+        fail_delete: AtomicBool,
+    }
+
+    impl MemoryApiKeyStore {
+        fn new(value: Option<&str>) -> Self {
+            Self {
+                value: Mutex::new(value.map(ToOwned::to_owned)),
+                fail_load: AtomicBool::new(false),
+                fail_save: AtomicBool::new(false),
+                fail_delete: AtomicBool::new(false),
+            }
+        }
+
+        fn value(&self) -> Option<String> {
+            self.value.lock().unwrap().clone()
+        }
+    }
+
+    impl ApiKeyStore for MemoryApiKeyStore {
+        fn load(&self) -> Result<Option<Zeroizing<String>>, String> {
+            if self.fail_load.load(Ordering::SeqCst) {
+                return Err("load failed".into());
+            }
+            Ok(self.value().map(Zeroizing::new))
+        }
+
+        fn save(&self, api_key: &str) -> Result<(), String> {
+            if self.fail_save.load(Ordering::SeqCst) {
+                return Err("save failed".into());
+            }
+            *self.value.lock().unwrap() = Some(api_key.to_owned());
+            Ok(())
+        }
+
+        fn delete(&self) -> Result<(), String> {
+            if self.fail_delete.load(Ordering::SeqCst) {
+                return Err("delete failed".into());
+            }
+            *self.value.lock().unwrap() = None;
+            Ok(())
+        }
+    }
 
     #[test]
     fn sse_parser_preserves_split_utf8_chunks() {
@@ -717,9 +882,94 @@ mod tests {
 
     #[test]
     fn validates_key_without_assuming_a_prefix() {
-        let runtime = FuguRuntime::new().unwrap();
-        assert!(runtime.set_key("future-key-format-123".into()).is_ok());
-        assert!(runtime.set_key("contains whitespace".into()).is_err());
-        assert!(runtime.set_key("short".into()).is_err());
+        assert!(normalize_key("future-key-format-123".into()).is_ok());
+        assert!(normalize_key("contains whitespace".into()).is_err());
+        assert!(normalize_key("short".into()).is_err());
+    }
+
+    #[test]
+    fn restores_a_valid_key_from_secure_storage() {
+        let store = Arc::new(MemoryApiKeyStore::new(Some("persisted-key-123")));
+        let runtime = FuguRuntime::new_with_store(store, None).unwrap();
+
+        assert!(runtime.has_key());
+        assert_eq!(runtime.key().unwrap().as_str(), "persisted-key-123");
+        assert_eq!(runtime.credential_notice(), None);
+    }
+
+    #[test]
+    fn rejects_and_removes_an_invalid_persisted_key() {
+        let store = Arc::new(MemoryApiKeyStore::new(Some("bad key")));
+        let runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
+
+        assert!(!runtime.has_key());
+        assert_eq!(store.value(), None);
+        assert!(runtime
+            .credential_notice()
+            .unwrap()
+            .contains("형식이 올바르지 않아"));
+    }
+
+    #[test]
+    fn save_failure_does_not_replace_the_active_key() {
+        let store = Arc::new(MemoryApiKeyStore::new(Some("previous-key-123")));
+        let runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
+        store.fail_save.store(true, Ordering::SeqCst);
+
+        assert_eq!(
+            runtime
+                .store_key(Zeroizing::new("replacement-key-456".into()))
+                .unwrap_err(),
+            "save failed"
+        );
+        assert_eq!(runtime.key().unwrap().as_str(), "previous-key-123");
+        assert_eq!(store.value().as_deref(), Some("previous-key-123"));
+    }
+
+    #[test]
+    fn clear_removes_memory_even_when_secure_delete_fails() {
+        let store = Arc::new(MemoryApiKeyStore::new(Some("persisted-key-123")));
+        let runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
+        store.fail_delete.store(true, Ordering::SeqCst);
+
+        assert_eq!(runtime.clear_key().unwrap_err(), "delete failed");
+        assert!(!runtime.has_key());
+        assert_eq!(store.value().as_deref(), Some("persisted-key-123"));
+        assert_eq!(
+            runtime.credential_notice().as_deref(),
+            Some("delete failed")
+        );
+    }
+
+    #[test]
+    fn load_failure_is_nonfatal_but_reported() {
+        let store = Arc::new(MemoryApiKeyStore::new(None));
+        store.fail_load.store(true, Ordering::SeqCst);
+
+        let runtime = FuguRuntime::new_with_store(store, None).unwrap();
+
+        assert!(!runtime.has_key());
+        assert_eq!(runtime.credential_notice().as_deref(), Some("load failed"));
+    }
+
+    #[test]
+    fn secure_store_round_trip_restores_the_key() {
+        let store = Arc::new(MemoryApiKeyStore::new(None));
+        let first_runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
+        first_runtime
+            .store_key(Zeroizing::new("round-trip-key-123".into()))
+            .unwrap();
+        drop(first_runtime);
+
+        let restored_runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
+        assert_eq!(
+            restored_runtime.key().unwrap().as_str(),
+            "round-trip-key-123"
+        );
+        restored_runtime.clear_key().unwrap();
+        drop(restored_runtime);
+
+        let cleared_runtime = FuguRuntime::new_with_store(store, None).unwrap();
+        assert!(!cleared_runtime.has_key());
     }
 }

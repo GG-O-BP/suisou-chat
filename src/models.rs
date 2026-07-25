@@ -80,6 +80,7 @@ pub struct Usage {
 pub struct BootstrapResponse {
     pub workspace: Workspace,
     pub key_configured: bool,
+    pub credential_notice: Option<String>,
     pub recovery_notice: Option<String>,
     pub storage_label: String,
     pub storage_writable: bool,

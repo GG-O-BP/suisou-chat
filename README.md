@@ -14,12 +14,12 @@ Suisou는 Sakana Fugu Responses API를 사용하는 로컬 우선 AI 리서치 �
 - 대화 검색, 고정, 삭제, Markdown 내보내기
 - 원자적 JSON 저장, 백업 복구, 손상 파일 읽기 전용 보호, 오프라인 기록 검색
 - 시스템·라이트·다크 테마, 반응형 레이아웃, 키보드·스크린리더 레이블
-- 세션 메모리에만 두는 API 키와 로그·디스크 비기록
+- 운영체제 보안 저장소에 보관하고 앱 시작 시 자동 복원하는 API 키
 - 외부 폰트/CDN 없는 오프라인 자산과 제한된 Tauri 권한/CSP
 
 ## 프라이버시 경계
 
-대화 기록과 설정은 기기 앱 데이터 디렉터리의 `workspace.json`에 저장됩니다. API 키는 프로세스 메모리에만 유지되며 앱 종료 후 다시 입력해야 합니다. 질문과 선택된 이전 대화는 답변 생성을 위해 Sakana API로 전송됩니다. 웹 검색 모드에서는 Sakana 측 검색 서비스가 질의를 처리하므로 민감한 정보는 입력하지 마세요.
+대화 기록과 설정은 기기 앱 데이터 디렉터리의 `workspace.json`에 저장됩니다. API 키는 `workspace.json`, 브라우저 저장소, 로그가 아니라 운영체제 보안 자격 증명 저장소에 저장되며 앱 시작 시 자동 복원됩니다. Linux에서는 Secret Service, Windows에서는 Credential Manager, macOS·iOS에서는 Keychain, Android에서는 Keystore로 보호되는 저장소를 사용합니다. 질문과 선택된 이전 대화는 답변 생성을 위해 Sakana API로 전송됩니다. 웹 검색 모드에서는 Sakana 측 검색 서비스가 질의를 처리하므로 민감한 정보는 입력하지 마세요.
 
 이 버전은 계정·클라우드 동기화를 의도적으로 포함하지 않습니다. 기록 열람·검색은 오프라인에서도 가능하지만 새 답변과 웹 출처 열기는 네트워크가 필요합니다.
 
@@ -48,7 +48,62 @@ cargo tauri build --no-bundle
 cargo tauri build
 ```
 
-앱을 연 뒤 설정에서 Sakana API 키를 입력하고 **연결 확인**을 누르세요. 키는 저장되지 않습니다.
+앱을 연 뒤 설정에서 Sakana API 키를 입력하고 **연결**을 누르세요. 연결 확인에 성공한 키는 이 기기의 운영체제 보안 저장소에 저장됩니다.
+
+### Android 빌드
+
+이 저장소의 생성된 Android 프로젝트는 Android SDK 36, NDK `29.0.13846066`, JDK 21을 기준으로 합니다. 이 환경에서는 필요한 SDK와 Rust Android 타깃이 이미 설치되어 있으므로 다음 스크립트를 사용하면 됩니다.
+
+```bash
+# arm64 디버그 APK
+./scripts/android-build-debug.sh
+
+# arm64 릴리스 APK와 AAB
+./scripts/android-build-release.sh
+```
+
+디버그 APK는 다음 경로에 생성됩니다.
+
+```text
+src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
+
+직접 명령을 실행하려면 먼저 환경을 불러옵니다.
+
+```bash
+source scripts/android-env.sh
+cargo tauri android build --debug --apk --target aarch64 --ci
+```
+
+새 머신이라면 Android command-line tools를 `$HOME/Android/Sdk`에 설치한 뒤 다음 패키지와 Rust 타깃을 준비하세요.
+
+```bash
+"$HOME/Android/Sdk/cmdline-tools/latest/bin/sdkmanager" \
+  --sdk_root="$HOME/Android/Sdk" \
+  "platform-tools" \
+  "platforms;android-36" \
+  "build-tools;35.0.0" \
+  "ndk;29.0.13846066"
+
+rustup target add \
+  aarch64-linux-android \
+  armv7-linux-androideabi \
+  i686-linux-android \
+  x86_64-linux-android
+```
+
+`src-tauri/gen/android`는 이미 초기화되어 있고 `MainActivity.kt`에 API 키 보안 저장소 초기화 코드가 포함되어 있습니다. 따라서 해당 코드를 보존하려면 `cargo tauri android init`을 다시 실행하지 마세요.
+
+실기기 설치는 USB 디버깅을 활성화하고 다음처럼 진행합니다.
+
+```bash
+source scripts/android-env.sh
+adb devices
+adb install -r \
+  src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
+
+디버그 APK는 Android 디버그 키로 자동 서명됩니다. Play Store 배포용 AAB는 별도의 업로드 키스토어와 Gradle signing configuration을 설정해야 합니다. 키스토어와 비밀번호 파일은 저장소에 커밋하지 마세요.
 
 ## 품질 검사
 
@@ -60,7 +115,7 @@ trunk build --release
 cargo tauri build --no-bundle
 ```
 
-현재 검증 기준에서는 Clippy가 경고 없이 통과하고 12개 테스트가 통과합니다. 요청 검증, UTF-8 분할/CRLF SSE, 답변·인용·사용량 추출, HTTPS 출처 필터링, 저장·백업 복구, Markdown 내보내기를 검사합니다.
+현재 검증 기준에서는 Clippy가 경고 없이 통과하고 18개 테스트가 통과합니다. 요청 검증, UTF-8 분할/CRLF SSE, 답변·인용·사용량 추출, HTTPS 출처 필터링, API 키 보안 저장·복원·삭제 오류, 작업 공간 저장·백업 복구, Markdown 내보내기를 검사합니다.
 
 ## 출시 전 체크리스트
 
@@ -73,7 +128,7 @@ cargo tauri build --no-bundle
 
 ## 알려진 제한
 
-- API 키는 세션 전용이며 OS 키체인 영구 저장을 아직 제공하지 않습니다.
+- 운영체제 보안 저장소가 잠겨 있거나 제공되지 않는 환경에서는 API 키 저장·복원이 실패하며, 평문 파일 저장으로 자동 전환하지 않습니다.
 - Markdown은 안전한 일반 텍스트로 표시됩니다. 완전한 서식 렌더링과 문장 단위 인용 매핑은 후속 항목입니다.
 - 기기 간 동기화, 음성, 파일 첨부, 팀 공유, 예약 연구에는 백엔드와 별도 개인정보 설계가 필요합니다.
 - 모바일 Markdown 내보내기는 앱 문서 디렉터리에 저장되며 네이티브 공유 시트는 아직 연결하지 않았습니다.
