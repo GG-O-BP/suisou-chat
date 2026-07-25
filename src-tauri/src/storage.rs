@@ -42,7 +42,7 @@ pub fn load_workspace(path: &Path) -> LoadedWorkspace {
                 workspace: Workspace::default(),
                 recovered_from_backup: false,
                 warning: Some(format!(
-                    "기존 작업 공간을 읽지 못했습니다. 손상된 파일을 덮어쓰지 않도록 새 저장을 잠시 중지해 주세요: {primary_error}"
+                    "기존 대화 기록을 읽지 못했습니다. 손상된 파일을 덮어쓰지 않도록 새 저장을 잠시 중지해 주세요: {primary_error}"
                 )),
             };
         }
@@ -59,7 +59,7 @@ pub fn load_workspace(path: &Path) -> LoadedWorkspace {
 fn read_valid_workspace(path: &Path) -> Result<Workspace, String> {
     let bytes = fs::read(path).map_err(|error| error.to_string())?;
     if bytes.len() > 100 * 1024 * 1024 {
-        return Err("작업 공간 파일이 100MB를 초과했습니다.".into());
+        return Err("대화 기록 파일이 100MB를 초과했습니다.".into());
     }
     let workspace: Workspace = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
     validate_workspace(&workspace)?;
@@ -70,11 +70,11 @@ pub fn save_workspace(path: &Path, workspace: &Workspace) -> Result<(), String> 
     validate_workspace(workspace)?;
     let parent = path
         .parent()
-        .ok_or_else(|| "작업 공간 경로가 올바르지 않습니다.".to_string())?;
+        .ok_or_else(|| "대화 기록 경로가 올바르지 않습니다.".to_string())?;
     fs::create_dir_all(parent).map_err(|error| format!("저장 폴더 생성 실패: {error}"))?;
 
     let bytes = serde_json::to_vec_pretty(workspace)
-        .map_err(|error| format!("작업 공간 직렬화 실패: {error}"))?;
+        .map_err(|error| format!("대화 기록 직렬화 실패: {error}"))?;
     let temporary = parent.join(format!(
         ".workspace-{}-{}.tmp",
         std::process::id(),
@@ -84,9 +84,9 @@ pub fn save_workspace(path: &Path, workspace: &Workspace) -> Result<(), String> 
     let mut file = fs::File::create(&temporary)
         .map_err(|error| format!("임시 저장 파일 생성 실패: {error}"))?;
     file.write_all(&bytes)
-        .map_err(|error| format!("작업 공간 쓰기 실패: {error}"))?;
+        .map_err(|error| format!("대화 기록 쓰기 실패: {error}"))?;
     file.sync_all()
-        .map_err(|error| format!("작업 공간 동기화 실패: {error}"))?;
+        .map_err(|error| format!("대화 기록 동기화 실패: {error}"))?;
 
     if read_valid_workspace(path).is_ok() {
         fs::copy(path, backup_path(path)).map_err(|error| format!("백업 생성 실패: {error}"))?;
@@ -98,22 +98,22 @@ pub fn save_workspace(path: &Path, workspace: &Workspace) -> Result<(), String> 
             {
                 let previous = backup_path(path);
                 fs::rename(path, &previous)
-                    .map_err(|error| format!("기존 작업 공간 보존 실패: {error}"))?;
+                    .map_err(|error| format!("기존 대화 기록 보존 실패: {error}"))?;
                 if let Err(error) = fs::rename(&temporary, path) {
                     let _ = fs::rename(&previous, path);
                     return Err(format!(
-                        "작업 공간 확정 실패: {error}; 최초 오류: {first_error}"
+                        "대화 기록 확정 실패: {error}; 최초 오류: {first_error}"
                     ));
                 }
             }
             #[cfg(not(target_os = "windows"))]
             {
                 let _ = fs::remove_file(&temporary);
-                return Err(format!("작업 공간 확정 실패: {first_error}"));
+                return Err(format!("대화 기록 확정 실패: {first_error}"));
             }
         } else {
             let _ = fs::remove_file(&temporary);
-            return Err(format!("작업 공간 확정 실패: {first_error}"));
+            return Err(format!("대화 기록 확정 실패: {first_error}"));
         }
     }
     let _ = fs::copy(path, backup_path(path));

@@ -138,7 +138,7 @@ pub fn title_from_question(question: &str) -> String {
     if chars.next().is_some() {
         format!("{title}…")
     } else if title.is_empty() {
-        "새로운 탐구".into()
+        "새 대화".into()
     } else {
         title
     }
@@ -168,6 +168,7 @@ mod tests {
             title_from_question("  한국의   인공지능 정책  "),
             "한국의 인공지능 정책"
         );
+        assert_eq!(title_from_question(" \n\t "), "새 대화");
         assert!(title_from_question(&"가".repeat(100)).chars().count() <= 43);
     }
 }

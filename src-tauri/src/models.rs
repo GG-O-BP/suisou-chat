@@ -138,7 +138,7 @@ pub struct ResearchEvent {
 pub fn validate_workspace(workspace: &Workspace) -> Result<(), String> {
     if workspace.version != WORKSPACE_VERSION {
         return Err(format!(
-            "지원하지 않는 작업 공간 버전입니다: {}",
+            "지원하지 않는 대화 기록 버전입니다: {}",
             workspace.version
         ));
     }

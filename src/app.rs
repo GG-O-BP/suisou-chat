@@ -294,7 +294,7 @@ impl AppState {
         });
         if prior_messages >= 199 || prior_chars.saturating_add(question.chars().count()) > 500_000 {
             self.show_toast(
-                "대화 문맥 한도에 도달했습니다. 새 탐구에서 질문을 이어가 주세요.",
+                "이 대화에서 사용할 수 있는 문맥 한도에 도달했습니다. 새 대화에서 이어가 주세요.",
                 "warning",
             );
             return;
@@ -492,7 +492,7 @@ impl AppState {
                     let model_note = if info.models.is_empty() {
                         String::new()
                     } else {
-                        format!(" · {}개 Fugu 모델", info.models.len())
+                        format!(" · 사용 가능한 모델 {}개", info.models.len())
                     };
                     batch(move || {
                         self.key_configured.set(true);
@@ -703,11 +703,11 @@ fn stage_index(stage: &str) -> i32 {
 fn stage_label(stage: &str) -> &'static str {
     match stage {
         "connecting" => "Sakana에 연결 중",
-        "searching" => "웹에서 근거 수집 중",
-        "reasoning" => "출처를 교차 검토 중",
-        "writing" => "답변을 정리하는 중",
+        "searching" => "웹 자료를 찾는 중",
+        "reasoning" => "출처를 비교하는 중",
+        "writing" => "답변을 작성하는 중",
         "cancelled" => "중단됨",
-        _ => "연구 중",
+        _ => "답변 준비 중",
     }
 }
 
@@ -869,7 +869,7 @@ fn Sidebar() -> View {
     });
 
     view! {
-        aside(class=move || format!("sidebar {}", if state.panel.get() == Panel::Sidebar { "visible" } else { "" }), aria-label="탐구 기록") {
+        aside(class=move || format!("sidebar {}", if state.panel.get() == Panel::Sidebar { "visible" } else { "" }), aria-label="대화 기록") {
             div(class="brand") {
                 div(class="brand-mark", aria-hidden="true") {
                     span(class="water-line") {}
@@ -887,7 +887,7 @@ fn Sidebar() -> View {
                 on:click=move |_| state.new_conversation()
             ) {
                 (icon("plus"))
-                span { "새로운 탐구" }
+                span { "새 대화" }
                 kbd { "⌘ N" }
             }
 
@@ -897,7 +897,7 @@ fn Sidebar() -> View {
                 input(bind:value=state.search_query, placeholder="기록에서 검색", autocomplete="off")
             }
 
-            nav(class="history-list", aria-label="저장된 탐구") {
+            nav(class="history-list", aria-label="저장된 대화") {
                 (if is_history_empty.get() {
                     view! {
                         div(class="history-empty") {
@@ -990,7 +990,7 @@ fn TopBar() -> View {
         state.workspace.with(|workspace| {
             current_conversation_ref(workspace, &active_id)
                 .map(|conversation| conversation.title.clone())
-                .unwrap_or_else(|| "새로운 탐구".into())
+                .unwrap_or_else(|| "새 대화".into())
         })
     });
     let source_count = state.selected_sources.map(Vec::len);
@@ -998,16 +998,25 @@ fn TopBar() -> View {
     view! {
         header(class="topbar") {
             div(class="topbar-start") {
-                button(class="icon-button mobile-only", aria-label="탐구 기록 열기", on:click=move |_| state.panel.set(Panel::Sidebar)) { (icon("menu")) }
+                button(class="icon-button mobile-only", aria-label="대화 기록 열기", on:click=move |_| state.panel.set(Panel::Sidebar)) { (icon("menu")) }
                 div(class="conversation-heading") {
                     small { "CURRENT DIVE" }
                     strong { (current_title) }
                 }
             }
             div(class="topbar-actions") {
-                span(class=move || format!("connection-pill {}", if state.key_configured.get() { "connected" } else { "disconnected" })) {
+                span(
+                    class=move || format!("connection-pill {}", if state.key_configured.get() { "connected" } else { "disconnected" }),
+                    role="status",
+                    aria-label=move || if state.key_configured.get() { "Sakana Fugu 연결됨" } else { "API 키 필요" }
+                ) {
                     span(class="connection-dot") {}
-                    (move || if state.key_configured.get() { "Fugu 연결됨" } else { "API 키 필요" })
+                    span(class="connection-label") {
+                        (move || if state.key_configured.get() { "Sakana Fugu 연결됨" } else { "API 키 필요" })
+                    }
+                    span(class="connection-label-mobile", aria-hidden="true") {
+                        (move || if state.key_configured.get() { "연결됨" } else { "키 필요" })
+                    }
                 }
                 button(class="icon-button", aria-label="출처 패널 열기", on:click=move |_| state.panel.set(Panel::Sources)) {
                     (icon("sources"))
@@ -1071,14 +1080,14 @@ fn Transcript() -> View {
             Transition(fallback=|| view! {
                 div(class="loading-state", role="status") {
                     span(class="sonar-loader") {}
-                    p { "작업 공간을 여는 중…" }
+                    p { "대화를 불러오는 중…" }
                 }
             }) {
                 (if state.is_loading.get() {
                     view! {
                         div(class="loading-state", role="status") {
                             span(class="sonar-loader") {}
-                            p { "작업 공간을 여는 중…" }
+                            p { "대화를 불러오는 중…" }
                         }
                     }
                 } else if state.active_id.get_clone().is_empty() {
@@ -1158,7 +1167,7 @@ fn Welcome() -> View {
                     span(class=move || format!("status-beacon {}", if state.key_configured.get() { "ready" } else { "attention" })) {}
                     div {
                         small { "LIFE SUPPORT · OBSERVATORY 01" }
-                        strong { (move || if state.key_configured.get() { "Fugu 연결 준비 완료" } else { "Sakana API 연결 필요" }) }
+                        strong { (move || if state.key_configured.get() { "Sakana Fugu 준비 완료" } else { "Sakana API 연결 필요" }) }
                     }
                     (if !state.key_configured.get() {
                         view! {
@@ -1182,7 +1191,7 @@ fn Welcome() -> View {
             div(class="suggestion-deck") {
                 div(class="suggestion-heading") {
                     span { "01—03" }
-                    p { "탐사 표본을 선택하거나 직접 질문하세요" }
+                    p { "예시 질문을 고르거나 직접 입력해 보세요" }
                 }
                 div(class="suggestion-grid") {
                     SuggestionButton(
@@ -1255,8 +1264,8 @@ fn MessageView(props: MessageViewProps) -> View {
     let footer_content = content.clone();
     let total_tokens = message.usage.as_ref().map(|usage| usage.total_tokens);
     let status_label = match message.status.as_str() {
-        "failed" => Some("완료되지 않은 부분 답변"),
-        "cancelled" => Some("중단된 부분 답변"),
+        "failed" => Some("일부만 작성됨"),
+        "cancelled" => Some("작성 중단됨"),
         _ => None,
     };
     let footer = if is_assistant {
@@ -1288,8 +1297,8 @@ fn MessageView(props: MessageViewProps) -> View {
     view! {
         article(class=format!("message {role_class} status-{status_class}")) {
             div(class="message-meta") {
-                span(class="role-mark") { (if is_assistant { "水" } else { "나" }) }
-                strong { (if is_assistant { "Suisou" } else { "나의 질문" }) }
+                span(class="role-mark", aria-hidden="true") { (if is_assistant { "F" } else { "Q" }) }
+                strong { (if is_assistant { "Sakana Fugu" } else { "질문" }) }
                 (status_label.map(|label| view! { span(class="partial-label") { (label) } }).unwrap_or_default())
                 time { (format_relative_time(message.created_at)) }
             }
@@ -1349,7 +1358,7 @@ fn StreamingMessage() -> View {
                 article(class="message assistant streaming", aria-busy="true") {
                     div(class="message-meta") {
                         span(class="role-mark sonar") { span {} }
-                        strong { "Suisou" }
+                        strong { "Sakana Fugu" }
                         span(class="research-stage") { (move || stage_label(&state.stage.get_clone())) }
                     }
                     (if state.streamed_text.with(String::is_empty) {
@@ -1357,7 +1366,7 @@ fn StreamingMessage() -> View {
                             div(
                                 class=move || format!("research-progress stage-{}", state.stage.get_clone()),
                                 role="progressbar",
-                                aria-label="연구 진행 상태",
+                                aria-label="답변 준비 상태",
                                 aria-valuemin="0",
                                 aria-valuemax="100",
                                 aria-valuenow=move || stage_percent.get().to_string()
@@ -1379,28 +1388,28 @@ fn StreamingMessage() -> View {
                                     ProgressStep(
                                         index="01",
                                         code="SEAL",
-                                        label="압력실 연결",
+                                        label="Sakana 연결",
                                         active=MaybeDyn::from(move || stage_progress.get() >= 0),
                                         current=MaybeDyn::from(move || state.stage.get_clone() == "connecting")
                                     )
                                     ProgressStep(
                                         index="02",
                                         code="SONAR",
-                                        label="웹 근거 탐색",
+                                        label="웹 자료 검색",
                                         active=MaybeDyn::from(move || stage_progress.get() >= 1),
                                         current=MaybeDyn::from(move || state.stage.get_clone() == "searching")
                                     )
                                     ProgressStep(
                                         index="03",
                                         code="CURRENT",
-                                        label="출처 교차 검토",
+                                        label="출처 비교",
                                         active=MaybeDyn::from(move || stage_progress.get() >= 2),
                                         current=MaybeDyn::from(move || state.stage.get_clone() == "reasoning")
                                     )
                                     ProgressStep(
                                         index="04",
                                         code="LIGHT",
-                                        label="발견 내용 조명",
+                                        label="답변 작성",
                                         active=MaybeDyn::from(move || stage_progress.get() >= 3),
                                         current=MaybeDyn::from(move || state.stage.get_clone() == "writing")
                                     )
@@ -1473,7 +1482,7 @@ fn RetryBanner() -> View {
             view! {
                 div(class=move || format!("retry-banner {}", state.stage.get_clone()), role="status") {
                     span(class="retry-signal", aria-hidden="true") {}
-                    span { (move || if state.stage.get_clone() == "cancelled" { "통제된 상승으로 탐사를 중단했습니다." } else { "탐사 신호가 불안정해 답변이 완료되지 않았습니다." }) }
+                    span { (move || if state.stage.get_clone() == "cancelled" { "답변 생성을 중단했습니다." } else { "연결이 불안정해 답변을 끝까지 작성하지 못했습니다." }) }
                     button(on:click=move |_| state.retry_question()) { (icon("retry")) "다시 시도" }
                 }
             }
@@ -1576,7 +1585,7 @@ fn Composer() -> View {
                             on:click=move |_| state.cancel_request()
                         ) {
                             (icon("stop"))
-                            span { "탐사 중단" }
+                            span { "답변 중단" }
                         }
                     }
                 }
@@ -1584,10 +1593,10 @@ fn Composer() -> View {
                 View::default()
             })
             div(class="capsule-rail") {
-                div(class="mode-tabs", role="radiogroup", aria-label="연구 방식") {
-                    ModeButton(value="quick", index="01", label="빠른 답변", detail="수면 통과", icon_name="spark")
-                    ModeButton(value="search", index="02", label="웹 검색", detail="소나 탐색", icon_name="globe")
-                    ModeButton(value="deep", index="03", label="딥 리서치", detail="심해 하강", icon_name="deep")
+                div(class="mode-tabs", role="radiogroup", aria-label="답변 방식") {
+                    ModeButton(value="quick", index="01", label="빠른 답변", detail="웹 검색 없이", icon_name="spark")
+                    ModeButton(value="search", index="02", label="웹 검색", detail="출처와 함께", icon_name="globe")
+                    ModeButton(value="deep", index="03", label="심층 조사", detail="넓고 깊게", icon_name="deep")
                 }
                 div(class="capsule-depth", aria-live="polite") {
                     small { "DIVE PROFILE" }
@@ -1651,7 +1660,7 @@ fn Composer() -> View {
                 (move || if state.storage_writable.get() {
                     "Enter로 전송 · Shift+Enter로 줄바꿈 · 출처는 반드시 원문에서 다시 확인하세요"
                 } else {
-                    "작업 공간 복구가 필요해 현재 읽기 전용입니다. 새 질문과 저장 기능을 사용할 수 없습니다."
+                    "저장된 대화를 복구해야 해서 현재 읽기 전용입니다. 새 질문을 보내거나 기록을 저장할 수 없습니다."
                 })
             }
         }
@@ -1711,7 +1720,7 @@ fn SourcesPanel() -> View {
                     div(class="sources-empty") {
                         span(class="source-rings") { (icon("sources")) }
                         h3 { "아직 출처가 없습니다" }
-                        p { "웹 검색이나 딥 리서치로 질문하면 Fugu가 확인한 근거를 여기에 모읍니다." }
+                        p { "웹 검색이나 심층 조사로 질문하면 Sakana Fugu가 참고한 자료를 여기에 모아 보여 줍니다." }
                     }
                 }
             } else {
@@ -1782,7 +1791,7 @@ fn SettingsPanel() -> View {
                             div(class="key-connected") {
                                 span { (icon("check")) }
                                 div {
-                                    strong { "Fugu 연결 준비 완료" }
+                                    strong { "Sakana Fugu 준비 완료" }
                                     small { (if state.connection_message.with(String::is_empty) {
                                         "이 기기의 보안 저장소에 저장됨".into()
                                     } else {
@@ -1805,14 +1814,14 @@ fn SettingsPanel() -> View {
                                         (move || if state.key_busy.get() { "확인 중…" } else { "연결" })
                                     }
                                 }
-                                p { "키는 작업 공간 파일·브라우저 저장소·로그가 아닌 운영체제 보안 저장소에 기록됩니다." }
+                                p { "키는 대화 기록이나 브라우저 저장소, 로그에 남기지 않고 운영체제 보안 저장소에만 보관합니다." }
                             }
                         }
                     })
                 }
 
                 section(class="setting-section") {
-                    div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "화면" } p { "환경과 선호에 맞는 명암을 선택합니다." } } }
+                    div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "화면" } p { "사용 환경에 맞는 화면 밝기를 선택하세요." } } }
                     div(class="segmented-control") {
                         ThemeButton(value="system", label="시스템")
                         ThemeButton(value="light", label="라이트")
@@ -1821,7 +1830,7 @@ fn SettingsPanel() -> View {
                 }
 
                 section(class="setting-section caution") {
-                    div(class="setting-title") { span(class="setting-number") { "03" } div { h3 { "데이터와 개인정보" } p { "대화 기록은 이 기기에 저장되지만, 질문과 문맥은 답변 생성을 위해 Sakana로 전송됩니다." } } }
+                    div(class="setting-title") { span(class="setting-number") { "03" } div { h3 { "데이터와 개인정보" } p { "대화 기록은 이 기기에만 저장합니다. 답변을 만들 때는 질문과 대화 내용을 Sakana로 전송합니다." } } }
                     ul {
                         li { "개인정보·건강·금융·회사 기밀을 입력하지 마세요." }
                         li { "Sakana의 보존·학습 설정과 약관을 배포 전에 확인하세요." }

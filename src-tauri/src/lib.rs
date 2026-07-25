@@ -47,7 +47,7 @@ fn save_workspace(mut workspace: Workspace, state: State<'_, AppState>) -> Resul
         .map_err(|_| "저장 작업을 잠글 수 없습니다.".to_string())?;
     let loaded = storage::load_workspace(&state.workspace_path);
     if loaded.warning.is_some() && !loaded.recovered_from_backup {
-        return Err("기존 작업 공간을 복구하기 전에는 덮어쓸 수 없습니다.".into());
+        return Err("기존 대화 기록을 복구하기 전에는 덮어쓸 수 없습니다.".into());
     }
     workspace.revision = loaded
         .workspace
