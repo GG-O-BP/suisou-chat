@@ -1,5 +1,6 @@
 use crate::icons::icon;
 use crate::ipc;
+use crate::markdown::{render_markdown, render_streaming_markdown};
 use crate::models::{
     format_relative_time, new_id, now_millis, title_from_question, BootstrapResponse,
     ConnectionInfo, Conversation, InputMessage, Message, ResearchEvent, ResearchRequest,
@@ -10,6 +11,7 @@ use sycamore::futures::spawn_local_scoped;
 use sycamore::prelude::*;
 use sycamore::web::events::{Event, KeyboardEvent, SubmitEvent};
 use sycamore::web::{Suspense, Transition};
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -33,6 +35,9 @@ struct AppState {
     active_request: Signal<String>,
     stage: Signal<String>,
     streamed_text: Signal<String>,
+    pending_stream: Signal<String>,
+    pending_stream_request: Signal<String>,
+    stream_frame_pending: Signal<bool>,
     key_configured: Signal<bool>,
     key_input: Signal<String>,
     key_busy: Signal<bool>,
@@ -59,6 +64,9 @@ impl AppState {
             active_request: create_signal(String::new()),
             stage: create_signal(String::new()),
             streamed_text: create_signal(String::new()),
+            pending_stream: create_signal(String::new()),
+            pending_stream_request: create_signal(String::new()),
+            stream_frame_pending: create_signal(false),
             key_configured: create_signal(false),
             key_input: create_signal(String::new()),
             key_busy: create_signal(false),
@@ -77,6 +85,60 @@ impl AppState {
         batch(move || {
             self.toast.set(message);
             self.toast_kind.set(kind.into());
+        });
+    }
+
+    fn queue_stream_delta(self, request_id: String, delta: String) {
+        if self.pending_stream_request.get_clone_untracked() != request_id {
+            batch(move || {
+                self.pending_stream.set(String::new());
+                self.pending_stream_request.set(request_id);
+            });
+        }
+        self.pending_stream
+            .update(|pending| pending.push_str(&delta));
+        if self.stream_frame_pending.get_untracked() {
+            return;
+        }
+        self.stream_frame_pending.set(true);
+
+        let callback = Closure::once_into_js(move || {
+            self.stream_frame_pending.set(false);
+            let pending_request = self.pending_stream_request.get_clone_untracked();
+            if self.active_request.get_clone_untracked() != pending_request {
+                batch(move || {
+                    self.pending_stream.set(String::new());
+                    self.pending_stream_request.set(String::new());
+                });
+                return;
+            }
+            self.flush_stream_delta();
+        });
+        let requested = web_sys::window().is_some_and(|window| {
+            window
+                .request_animation_frame(callback.unchecked_ref())
+                .is_ok()
+        });
+        if !requested {
+            self.stream_frame_pending.set(false);
+            self.flush_stream_delta();
+        }
+    }
+
+    fn flush_stream_delta(self) {
+        let pending = self.pending_stream.replace(String::new());
+        self.pending_stream_request.set(String::new());
+        if !pending.is_empty() {
+            self.streamed_text
+                .update(|streamed| streamed.push_str(&pending));
+        }
+    }
+
+    fn reset_stream(self) {
+        batch(move || {
+            self.pending_stream.set(String::new());
+            self.pending_stream_request.set(String::new());
+            self.streamed_text.set(String::new());
         });
     }
 
@@ -282,7 +344,7 @@ impl AppState {
         batch(move || {
             self.composer.set(String::new());
             self.last_failed_question.set(String::new());
-            self.streamed_text.set(String::new());
+            self.reset_stream();
             self.selected_sources.set(Vec::new());
             self.stage.set("connecting".into());
             self.is_running.set(true);
@@ -317,6 +379,7 @@ impl AppState {
             if self.active_request.get_clone_untracked() != request_id {
                 return;
             }
+            self.flush_stream_delta();
             batch(move || {
                 self.is_running.set(false);
                 self.active_request.set(String::new());
@@ -343,7 +406,7 @@ impl AppState {
                     });
                     batch(move || {
                         self.selected_sources.set(response.sources);
-                        self.streamed_text.set(String::new());
+                        self.reset_stream();
                         self.stage.set("done".into());
                     });
                     self.persist_workspace();
@@ -378,7 +441,7 @@ impl AppState {
                     }
                     batch(move || {
                         self.stage.set(status.into());
-                        self.streamed_text.set(String::new());
+                        self.reset_stream();
                         self.last_failed_question.set(question);
                     });
                     let mut error = error;
@@ -582,6 +645,25 @@ fn open_url(state: AppState, url: String) {
     });
 }
 
+fn open_markdown_link(state: AppState, event: web_sys::MouseEvent) {
+    let Some(element) = event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest("a").ok().flatten())
+    else {
+        return;
+    };
+    let Some(url) = element.get_attribute("href") else {
+        return;
+    };
+    event.prevent_default();
+    if url.is_empty() {
+        state.show_toast("안전한 HTTPS 링크만 열 수 있습니다.", "warning");
+    } else {
+        open_url(state, url);
+    }
+}
+
 fn copy_text(state: AppState, text: String) {
     spawn_local_scoped(async move {
         let result = if let Some(window) = web_sys::window() {
@@ -676,9 +758,7 @@ fn AppRuntime() -> View {
                 return;
             }
             match event.kind.as_str() {
-                "delta" => state
-                    .streamed_text
-                    .update(|value| value.push_str(&event.value)),
+                "delta" => state.queue_stream_delta(event.request_id, event.value),
                 "stage" => state.stage.set(event.value),
                 _ => {}
             }
@@ -1166,6 +1246,7 @@ struct MessageViewProps {
 
 #[component]
 fn MessageView(props: MessageViewProps) -> View {
+    let state = use_context::<AppState>();
     let message = props.message;
     let is_assistant = message.role == "assistant";
     let role_class = message.role.clone();
@@ -1192,6 +1273,18 @@ fn MessageView(props: MessageViewProps) -> View {
     } else {
         View::default()
     };
+    let body = if is_assistant {
+        let html = render_markdown(&content);
+        view! {
+            div(
+                class="message-body markdown-body",
+                on:click=move |event| open_markdown_link(state, event),
+                dangerously_set_inner_html=html
+            )
+        }
+    } else {
+        view! { div(class="message-body") { (content) } }
+    };
     view! {
         article(class=format!("message {role_class} status-{status_class}")) {
             div(class="message-meta") {
@@ -1200,7 +1293,7 @@ fn MessageView(props: MessageViewProps) -> View {
                 (status_label.map(|label| view! { span(class="partial-label") { (label) } }).unwrap_or_default())
                 time { (format_relative_time(message.created_at)) }
             }
-            div(class="message-body") { (content) }
+            (body)
             (footer)
         }
     }
@@ -1253,7 +1346,7 @@ fn StreamingMessage() -> View {
     view! {
         (if state.is_running.get() {
             view! {
-                article(class="message assistant streaming", aria-live="polite") {
+                article(class="message assistant streaming", aria-busy="true") {
                     div(class="message-meta") {
                         span(class="role-mark sonar") { span {} }
                         strong { "Suisou" }
@@ -1320,7 +1413,18 @@ fn StreamingMessage() -> View {
                                 span { "FINDINGS ILLUMINATING" }
                                 span { (move || format!("{:04} M", stage_depth(&state.stage.get_clone()))) }
                             }
-                            div(class="message-body illuminated") { (state.streamed_text) span(class="typing-cursor") {} }
+                            (move || {
+                                let html = render_streaming_markdown(&state.streamed_text.get_clone());
+                                view! {
+                                    div(
+                                        class="message-body markdown-body illuminated",
+                                        on:click=move |event| open_markdown_link(state, event),
+                                        dangerously_set_inner_html=html
+                                    )
+                                }
+                            })
+                            span(class="typing-cursor", aria-hidden="true") {}
+                            span(class="sr-only", role="status", aria-live="polite") { "답변을 작성하고 있습니다." }
                         }
                     })
                 }

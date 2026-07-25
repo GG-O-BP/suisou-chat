@@ -1,6 +1,7 @@
 mod app;
 mod icons;
 mod ipc;
+mod markdown;
 mod models;
 
 use app::App;
