@@ -42,7 +42,7 @@ pub fn icon(name: &str) -> View {
             view! { svg(viewBox="0 0 24 24", aria-hidden="true") { circle(cx="12", cy="12", r="9") path(d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18") } }
         }
         "deep" => {
-            view! { svg(viewBox="0 0 24 24", aria-hidden="true") { path(d="M4 5h16v4H4zM6 12h12v3H6zM8 18h8v2H8z") } }
+            view! { svg(viewBox="0 0 24 24", aria-hidden="true") { path(d="M12 3v14m0 0-4-4m4 4 4-4M5 6h14M7 20h10") } }
         }
         "key" => {
             view! { svg(viewBox="0 0 24 24", aria-hidden="true") { circle(cx="8", cy="12", r="4") path(d="M12 12h9m-3 0v3m-3-3v2") } }

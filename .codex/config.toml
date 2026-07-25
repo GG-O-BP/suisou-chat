@@ -1,0 +1,33 @@
+# Suisou 프로젝트 범위 Codex 설정 (신뢰된 저장소에서만 적용됨)
+
+# 복잡한 구현은 high, 아트 디렉션과 계획 단계는 xhigh를 기본으로 한다.
+model_reasoning_effort = "high"
+plan_mode_reasoning_effort = "xhigh"
+
+# 저장소 내부에서만 자동 수정하고, 범위를 넘는 작업은 승인을 요청한다.
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+# 일반 디자인 조사는 캐시 검색을 사용하고 최신 자료가 필요한 작업은 --search로 시작한다.
+web_search = "cached"
+
+# Codex가 실행하는 하위 프로세스에서 NO_COLOR를 제거한다.
+# 현재 셸의 NO_COLOR=1이 Trunk 0.21.14의 `--no-color` 파싱을 깨뜨리기 때문이다.
+[shell_environment_policy]
+# 이 저장소는 OpenAI API 키를 사용하지 않는다. 내장 image_gen은 키 없이
+# 사용할 수 있지만 OpenAI Image API CLI fallback에는 이 변수를 전달하지 않는다.
+exclude = ["NO_COLOR", "OPENAI_API_KEY"]
+ignore_default_excludes = false
+
+# 로컬 스크린샷 / 무드보드 / 생성 이미지 자산 검사를 허용한다.
+[tools]
+view_image = true
+
+[features]
+skill_search = true
+image_generation = true
+apps = true
+
+[sandbox_workspace_write]
+# 의존성 다운로드나 외부 명령 네트워크는 필요할 때만 명시적으로 승인한다.
+network_access = false
