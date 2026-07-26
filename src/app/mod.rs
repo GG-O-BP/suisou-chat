@@ -3,8 +3,8 @@ use crate::ipc;
 use crate::markdown::{render_markdown, render_streaming_markdown};
 use crate::models::{
     format_relative_time, new_id, now_millis, remove_conversation, title_from_question,
-    BootstrapResponse, ConnectionInfo, Conversation, InputMessage, Message, ResearchEvent,
-    ResearchRequest, ResearchResponse, Source, Workspace,
+    BootstrapResponse, ConnectionInfo, Conversation, InputMessage, Message, ResearchJob,
+    ResearchJobUpdate, ResearchRequest, Source, StartResearchResponse, Workspace,
 };
 use serde::Serialize;
 use std::collections::VecDeque;

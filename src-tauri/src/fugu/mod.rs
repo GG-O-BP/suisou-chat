@@ -9,10 +9,8 @@ use crate::credentials::{ApiKeyStore, SystemApiKeyStore, UnavailableApiKeyStore}
 use crate::models::{validate_research_request, ConnectionInfo, ResearchRequest, ResearchResponse};
 use reqwest::Client;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::WebviewWindow;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -20,12 +18,10 @@ use policy::{instructions, output_limit};
 use response::{extract_answer, extract_sources, extract_usage};
 use stream::consume_stream;
 use transport::{
-    cancelled, emit, http_error, key_verification_network_error, network_error, normalize_key,
-    valid_key,
+    cancelled, http_error, key_verification_network_error, network_error, normalize_key, valid_key,
 };
 
 const API_ROOT: &str = "https://api.sakana.ai/v1";
-const RESEARCH_EVENT: &str = "research-event";
 const KEY_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;
@@ -39,7 +35,6 @@ pub struct FuguRuntime {
     api_key_store: Arc<dyn ApiKeyStore>,
     key_update: Mutex<()>,
     credential_notice: Mutex<Option<String>>,
-    active: Mutex<HashMap<String, CancellationToken>>,
 }
 
 #[cfg(test)]

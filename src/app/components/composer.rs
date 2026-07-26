@@ -131,7 +131,7 @@ pub(crate) fn Composer() -> View {
                     div(class="model-controls") {
                         label {
                             span(class="sr-only") { "Fugu 모델" }
-                            select(disabled=move || !state.storage_writable.get(), on:change=move |event: Event| {
+                            select(disabled=move || state.is_running.get() || !state.storage_writable.get(), on:change=move |event: Event| {
                                 if let Some(value) = select_value(event) {
                                     state.workspace.update(|workspace| workspace.settings.model = value);
                                     state.persist_workspace();
@@ -144,7 +144,7 @@ pub(crate) fn Composer() -> View {
                         span(class="control-divider") {}
                         label {
                             span(class="sr-only") { "추론 강도" }
-                            select(disabled=move || !state.storage_writable.get(), on:change=move |event: Event| {
+                            select(disabled=move || state.is_running.get() || !state.storage_writable.get(), on:change=move |event: Event| {
                                 if let Some(value) = select_value(event) {
                                     state.workspace.update(|workspace| workspace.settings.reasoning = value);
                                     state.persist_workspace();
@@ -209,7 +209,7 @@ pub(crate) fn ModeButton(props: ModeButtonProps) -> View {
             role="radio",
             aria-checked=move || selected.get().to_string(),
             class=move || if selected.get() { "active" } else { "" },
-            disabled=move || !state.storage_writable.get(),
+            disabled=move || state.is_running.get() || !state.storage_writable.get(),
             on:click=move |_| {
                 state.workspace.update(|workspace| workspace.settings.last_mode = props.value.into());
                 state.persist_workspace();

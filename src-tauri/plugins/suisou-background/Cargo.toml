@@ -1,0 +1,15 @@
+[package]
+name = "tauri-plugin-suisou-background"
+version = "0.1.0"
+description = "Suisou mobile background execution bridge"
+edition = "2021"
+links = "tauri-plugin-suisou-background"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tauri = { version = "2", default-features = false }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

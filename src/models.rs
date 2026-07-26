@@ -79,6 +79,7 @@ pub struct Usage {
 #[derive(Clone, Debug, Deserialize)]
 pub struct BootstrapResponse {
     pub workspace: Workspace,
+    pub workspace_revision: u64,
     pub key_configured: bool,
     pub credential_notice: Option<String>,
     pub recovery_notice: Option<String>,
@@ -101,24 +102,51 @@ pub struct ResearchRequest {
     pub messages: Vec<InputMessage>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ResearchResponse {
+    pub request_id: String,
     pub answer: String,
     pub sources: Vec<Source>,
     pub usage: Option<Usage>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct ResearchJob {
+    pub request_id: String,
+    pub conversation_id: String,
+    #[serde(default)]
+    pub workspace_revision: u64,
+    #[serde(default)]
+    pub workspace_persisted: bool,
+    pub assistant_message_id: String,
+    pub question: String,
+    pub mode: String,
+    pub status: String,
+    pub stage: String,
+    pub partial_answer: String,
+    pub result: Option<ResearchResponse>,
+    pub error: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct StartResearchResponse {
+    pub job: ResearchJob,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ResearchJobUpdate {
+    pub request_id: String,
+    pub kind: String,
+    pub value: String,
+    pub job: Option<ResearchJob>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ConnectionInfo {
     pub message: String,
     pub models: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ResearchEvent {
-    pub request_id: String,
-    pub kind: String,
-    pub value: String,
 }
 
 pub fn new_id(prefix: &str) -> String {

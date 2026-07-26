@@ -1,0 +1,1 @@
+-keep class com.ggobp.suisou_chat.background.SuisouResearchService { *; }

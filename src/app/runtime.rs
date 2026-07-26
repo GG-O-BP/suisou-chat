@@ -7,15 +7,42 @@ pub(super) fn AppRuntime() -> View {
     let state = use_context::<AppState>();
 
     spawn_local_scoped(async move {
-        match ipc::listen::<ResearchEvent, _>("research-event", move |event| {
-            if event.request_id != state.active_request.get_clone_untracked() {
+        match ipc::listen::<ResearchJobUpdate, _>("research-job-event", move |event| {
+            if state.is_loading.get_untracked() {
                 return;
             }
             match event.kind.as_str() {
-                "delta" => state.queue_stream_delta(event.request_id, event.value),
-                "stage" => state.stage.set(event.value),
+                "snapshot" => {
+                    if let Some(job) = event.job {
+                        state.apply_research_job(job);
+                    }
+                }
+                "stage" if event.request_id == state.active_request.get_clone_untracked() => {
+                    state.stage.set(event.value);
+                }
+                "delta" if event.request_id == state.active_request.get_clone_untracked() => {
+                    state.queue_stream_delta(event.request_id, event.value);
+                }
                 _ => {}
             }
+        })
+        .await
+        {
+            Ok(listener) => on_cleanup(move || listener.unlisten()),
+            Err(error) => state.show_toast(error, "error"),
+        }
+    });
+
+    spawn_local_scoped(async move {
+        match ipc::listen::<(), _>("tauri://resumed", move |_| {
+            let state = state;
+            spawn_local(async move {
+                match ipc::command::<_, Vec<ResearchJob>>("list_research_jobs", &EmptyArgs {}).await
+                {
+                    Ok(jobs) => state.restore_research_jobs(jobs),
+                    Err(error) => state.show_toast(error, "error"),
+                }
+            });
         })
         .await
         {
@@ -52,11 +79,17 @@ pub(super) async fn BootstrapWorkspace() -> View {
                 });
                 state.storage_label.set(response.storage_label);
                 state.storage_writable.set(response.storage_writable);
-                state.workspace.set(response.workspace);
+                let mut workspace = response.workspace;
+                workspace.revision = response.workspace_revision;
+                state.workspace.set(workspace);
                 state.is_loading.set(false);
             });
             if !notices.is_empty() {
                 state.show_toast(notices.join(" "), "warning");
+            }
+            match ipc::command::<_, Vec<ResearchJob>>("list_research_jobs", &EmptyArgs {}).await {
+                Ok(jobs) => state.restore_research_jobs(jobs),
+                Err(error) => state.show_toast(error, "error"),
             }
         }
         Err(error) => {

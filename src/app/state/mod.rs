@@ -26,6 +26,7 @@ pub(super) struct AppState {
     pub(super) is_loading: Signal<bool>,
     pub(super) is_running: Signal<bool>,
     pub(super) active_request: Signal<String>,
+    pub(super) active_assistant_message: Signal<String>,
     pub(super) stage: Signal<String>,
     pub(super) streamed_text: Signal<String>,
     pub(super) pending_stream: Signal<String>,
@@ -59,6 +60,7 @@ impl AppState {
             is_loading: create_signal(true),
             is_running: create_signal(false),
             active_request: create_signal(String::new()),
+            active_assistant_message: create_signal(String::new()),
             stage: create_signal(String::new()),
             streamed_text: create_signal(String::new()),
             pending_stream: create_signal(String::new()),
@@ -129,7 +131,13 @@ struct RequestIdArgs {
 
 #[derive(Clone, Serialize)]
 struct ResearchArgs {
+    #[serde(rename = "conversationId")]
+    conversation_id: String,
+    #[serde(rename = "assistantMessageId")]
+    assistant_message_id: String,
+    question: String,
     request: ResearchRequest,
+    workspace: Workspace,
 }
 
 #[derive(Clone, Serialize)]

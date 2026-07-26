@@ -96,7 +96,10 @@ pub(crate) fn SettingsPanel() -> View {
                                         state.connection_message.get_clone()
                                     }) }
                                 }
-                                button(on:click=move |_| state.clear_key()) { "연결 해제" }
+                                button(
+                                    disabled=move || state.is_running.get(),
+                                    on:click=move |_| state.clear_key()
+                                ) { "연결 해제" }
                             }
                         }
                     } else {
@@ -142,7 +145,7 @@ pub(crate) fn SettingsPanel() -> View {
                         section(class="setting-section conversation-tools") {
                             h3 { "현재 대화" }
                             div(class="tool-row") {
-                                button(disabled=move || !state.storage_writable.get(), on:click=move |_| state.toggle_pin()) { (icon("pin")) "고정 전환" }
+                                button(disabled=move || state.is_running.get() || !state.storage_writable.get(), on:click=move |_| state.toggle_pin()) { (icon("pin")) "고정 전환" }
                                 button(on:click=move |_| state.export_current()) { (icon("export")) "Markdown 내보내기" }
                                 button(
                                     class="danger",
@@ -181,7 +184,7 @@ pub(crate) fn ThemeButton(props: ThemeButtonProps) -> View {
     view! {
         button(
             class=move || if selected.get() { "active" } else { "" },
-            disabled=move || !state.storage_writable.get(),
+            disabled=move || state.is_running.get() || !state.storage_writable.get(),
             on:click=move |_| {
                 update_theme(props.value);
                 state.workspace.update(|workspace| workspace.settings.theme = props.value.into());

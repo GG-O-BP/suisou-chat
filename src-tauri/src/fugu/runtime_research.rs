@@ -1,55 +1,32 @@
 use super::*;
 
 impl FuguRuntime {
-    pub fn cancel(&self, request_id: &str) -> Result<bool, String> {
-        let active = self
-            .active
-            .lock()
-            .map_err(|_| "요청 상태를 잠글 수 없습니다.".to_string())?;
-        if let Some(token) = active.get(request_id) {
-            token.cancel();
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    pub async fn research(
+    pub async fn research<F>(
         &self,
-        window: WebviewWindow,
         request: ResearchRequest,
-    ) -> Result<ResearchResponse, String> {
+        cancellation: CancellationToken,
+        mut emit: F,
+    ) -> Result<ResearchResponse, String>
+    where
+        F: FnMut(&str, &str) + Send,
+    {
         validate_research_request(&request)?;
         let key = self.key()?;
-        let cancellation = CancellationToken::new();
-        {
-            let mut active = self
-                .active
-                .lock()
-                .map_err(|_| "요청 상태를 잠글 수 없습니다.".to_string())?;
-            if active.contains_key(&request.request_id) {
-                return Err("같은 ID의 요청이 이미 실행 중입니다.".into());
-            }
-            active.insert(request.request_id.clone(), cancellation.clone());
-        }
-
-        let result = self
-            .research_inner(&window, &request, key, cancellation)
-            .await;
-        if let Ok(mut active) = self.active.lock() {
-            active.remove(&request.request_id);
-        }
-        result
+        self.research_inner(&request, key, cancellation, &mut emit)
+            .await
     }
 
-    async fn research_inner(
+    async fn research_inner<F>(
         &self,
-        window: &WebviewWindow,
         request: &ResearchRequest,
         key: Zeroizing<String>,
         cancellation: CancellationToken,
-    ) -> Result<ResearchResponse, String> {
-        emit(window, &request.request_id, "stage", "connecting");
+        emit: &mut F,
+    ) -> Result<ResearchResponse, String>
+    where
+        F: FnMut(&str, &str) + Send,
+    {
+        emit("stage", "connecting");
 
         let input = request
             .messages
@@ -76,7 +53,7 @@ impl FuguRuntime {
             .json(&body)
             .send();
         let response = tokio::select! {
-            _ = cancellation.cancelled() => return cancelled(window, &request.request_id),
+            _ = cancellation.cancelled() => return cancelled(),
             response = send => response.map_err(network_error)?,
         };
         if !response.status().is_success() {
@@ -84,11 +61,11 @@ impl FuguRuntime {
         }
 
         if matches!(request.mode.as_str(), "search" | "deep") {
-            emit(window, &request.request_id, "stage", "searching");
+            emit("stage", "searching");
         } else if request.mode == "create" {
-            emit(window, &request.request_id, "stage", "creating");
+            emit("stage", "creating");
         } else {
-            emit(window, &request.request_id, "stage", "reasoning");
+            emit("stage", "reasoning");
         }
 
         let content_type = response
@@ -99,13 +76,13 @@ impl FuguRuntime {
             .to_owned();
 
         let (answer, completed) = if content_type.contains("text/event-stream") {
-            consume_stream(window, request, response, cancellation).await?
+            consume_stream(request, response, cancellation, emit).await?
         } else {
             if response.content_length().unwrap_or(0) > MAX_RESPONSE_BYTES as u64 {
                 return Err("Sakana 응답이 안전한 크기 제한을 초과했습니다.".into());
             }
             let bytes = tokio::select! {
-                _ = cancellation.cancelled() => return cancelled(window, &request.request_id),
+                _ = cancellation.cancelled() => return cancelled(),
                 bytes = response.bytes() => bytes.map_err(network_error)?,
             };
             if bytes.len() > MAX_RESPONSE_BYTES {
@@ -122,7 +99,7 @@ impl FuguRuntime {
         }
         let sources = completed.as_ref().map(extract_sources).unwrap_or_default();
         let usage = completed.as_ref().and_then(extract_usage);
-        emit(window, &request.request_id, "stage", "done");
+        emit("stage", "done");
         Ok(ResearchResponse {
             request_id: request.request_id.clone(),
             answer,

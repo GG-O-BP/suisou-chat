@@ -37,6 +37,13 @@ impl AppState {
     }
 
     pub(in crate::app) fn clear_key(self) {
+        if self.is_running.get_untracked() {
+            self.show_toast(
+                "실행 중인 답변을 먼저 중단한 뒤 API 키 연결을 해제해 주세요.",
+                "warning",
+            );
+            return;
+        }
         spawn_local_scoped(async move {
             let result = ipc::command_unit("clear_api_key", &EmptyArgs {}).await;
             batch(move || {

@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-suisou-background = { path = "plugins/suisou-background" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
@@ -40,6 +41,7 @@ apple-native-keyring-store = { version = "1.0", default-features = false, featur
 [target.'cfg(target_os = "android")'.dependencies]
 android-native-keyring-store = "1.0"
 jni = "0.21"
+ndk-context = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

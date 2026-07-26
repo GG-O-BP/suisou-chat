@@ -46,6 +46,9 @@ impl AppState {
         if !exists {
             return;
         }
+        if self.is_running.get_untracked() {
+            return;
+        }
         let is_active = self.active_id.get_clone_untracked() == id;
         let rollback_id = self.next_rollback_id.get_untracked().saturating_add(1);
         self.next_rollback_id.set(rollback_id);
@@ -82,7 +85,7 @@ impl AppState {
     }
 
     pub(in crate::app) fn toggle_pin(self) {
-        if !self.storage_writable.get_untracked() {
+        if self.is_running.get_untracked() || !self.storage_writable.get_untracked() {
             return;
         }
         let id = self.active_id.get_clone_untracked();

@@ -27,6 +27,10 @@
     },
     "shortDescription": "Local-first AI research with Sakana Fugu",
     "longDescription": "Suisou researches, cross-checks, cites, and locally preserves answers powered by Sakana Fugu.",
+    "iOS": {
+      "minimumSystemVersion": "26.0",
+      "infoPlist": "Info.ios.plist"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

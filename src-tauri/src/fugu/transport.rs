@@ -1,24 +1,8 @@
-use crate::models::ResearchEvent;
 use reqwest::StatusCode;
 use serde_json::Value;
-use tauri::{Emitter, WebviewWindow};
 use zeroize::Zeroizing;
 
-use super::RESEARCH_EVENT;
-
-pub(super) fn emit(window: &WebviewWindow, request_id: &str, kind: &str, value: &str) {
-    let _ = window.emit(
-        RESEARCH_EVENT,
-        ResearchEvent {
-            request_id: request_id.to_owned(),
-            kind: kind.to_owned(),
-            value: value.to_owned(),
-        },
-    );
-}
-
-pub(super) fn cancelled<T>(window: &WebviewWindow, request_id: &str) -> Result<T, String> {
-    emit(window, request_id, "stage", "cancelled");
+pub(super) fn cancelled<T>() -> Result<T, String> {
     Err("요청이 중단되었습니다.".into())
 }
 

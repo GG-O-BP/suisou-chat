@@ -2,18 +2,20 @@ use super::{MAX_ANSWER_BYTES, MAX_SSE_FRAME_BYTES};
 use crate::models::ResearchRequest;
 use futures_util::StreamExt;
 use serde_json::Value;
-use tauri::WebviewWindow;
 use tokio_util::sync::CancellationToken;
 
 use super::response::extract_answer;
-use super::transport::{cancelled, clean_remote_error, emit, network_error};
+use super::transport::{cancelled, clean_remote_error, network_error};
 
-pub(super) async fn consume_stream(
-    window: &WebviewWindow,
+pub(super) async fn consume_stream<F>(
     request: &ResearchRequest,
     response: reqwest::Response,
     cancellation: CancellationToken,
-) -> Result<(String, Option<Value>), String> {
+    emit: &mut F,
+) -> Result<(String, Option<Value>), String>
+where
+    F: FnMut(&str, &str) + Send,
+{
     let mut stream = response.bytes_stream();
     let mut buffer = Vec::new();
     let mut streamed_answer = String::new();
@@ -22,7 +24,7 @@ pub(super) async fn consume_stream(
 
     loop {
         let chunk = tokio::select! {
-            _ = cancellation.cancelled() => return cancelled(window, &request.request_id),
+            _ = cancellation.cancelled() => return cancelled(),
             chunk = stream.next() => chunk,
         };
         let Some(chunk) = chunk else { break };
@@ -53,25 +55,25 @@ pub(super) async fn consume_stream(
             };
 
             if event_type.contains("web_search") {
-                emit(window, &request.request_id, "stage", "searching");
+                emit("stage", "searching");
             } else if request.mode == "create"
                 && !writing_started
                 && event_type.contains("reasoning")
             {
-                emit(window, &request.request_id, "stage", "reasoning");
+                emit("stage", "reasoning");
             }
             match event_type {
                 "response.output_text.delta" => {
                     if let Some(delta) = value.get("delta").and_then(Value::as_str) {
                         if !writing_started {
-                            emit(window, &request.request_id, "stage", "writing");
+                            emit("stage", "writing");
                             writing_started = true;
                         }
                         if streamed_answer.len().saturating_add(delta.len()) > MAX_ANSWER_BYTES {
                             return Err("Fugu 답변이 안전한 크기 제한을 초과했습니다.".into());
                         }
                         streamed_answer.push_str(delta);
-                        emit(window, &request.request_id, "delta", delta);
+                        emit("delta", delta);
                     }
                 }
                 "response.completed" => {

@@ -84,7 +84,9 @@ impl AppState {
         });
 
         let request_id = new_id("request");
+        let assistant_message_id = new_id("message");
         let active_request_id = request_id.clone();
+        let active_assistant_id = assistant_message_id.clone();
         batch(move || {
             self.composer.set(String::new());
             self.last_failed_question.set(String::new());
@@ -93,8 +95,8 @@ impl AppState {
             self.stage.set("connecting".into());
             self.is_running.set(true);
             self.active_request.set(active_request_id);
+            self.active_assistant_message.set(active_assistant_id);
         });
-        self.persist_workspace();
 
         let request = self.workspace.with_untracked(|workspace| {
             let conversation = current_conversation_ref(workspace, &conversation_id)
@@ -115,96 +117,232 @@ impl AppState {
                     .collect(),
             }
         });
+        let workspace = self.workspace.get_clone_untracked();
 
         spawn_local_scoped(async move {
-            let result =
-                ipc::command::<_, ResearchResponse>("run_research", &ResearchArgs { request })
-                    .await;
-            if self.active_request.get_clone_untracked() != request_id {
-                return;
-            }
-            self.flush_stream_delta();
-            batch(move || {
-                self.is_running.set(false);
-                self.active_request.set(String::new());
-            });
+            let result = ipc::command::<_, StartResearchResponse>(
+                "start_research",
+                &ResearchArgs {
+                    conversation_id,
+                    assistant_message_id,
+                    question: question.clone(),
+                    request,
+                    workspace,
+                },
+            )
+            .await;
             match result {
                 Ok(response) => {
-                    self.workspace.update(|value| {
-                        if let Some(conversation) = value
-                            .conversations
-                            .iter_mut()
-                            .find(|conversation| conversation.id == conversation_id)
-                        {
-                            conversation.updated_at = now_millis();
-                            conversation.messages.push(Message {
-                                id: new_id("message"),
-                                role: "assistant".into(),
-                                content: response.answer,
-                                created_at: now_millis(),
-                                status: "complete".into(),
-                                sources: response.sources.clone(),
-                                usage: response.usage,
-                            });
-                        }
+                    self.workspace.update_silent(|workspace| {
+                        workspace.revision = response.job.workspace_revision;
                     });
-                    batch(move || {
-                        self.selected_sources.set(response.sources);
-                        self.reset_stream();
-                        self.stage.set("done".into());
-                    });
-                    self.persist_workspace();
+                    self.apply_research_job(response.job);
                 }
                 Err(error) => {
-                    let partial = self.streamed_text.get_clone_untracked();
-                    let status = if error.contains("중단") {
-                        "cancelled"
-                    } else {
-                        "failed"
-                    };
-                    if !partial.trim().is_empty() {
-                        self.workspace.update(|value| {
-                            if let Some(conversation) = value
-                                .conversations
-                                .iter_mut()
-                                .find(|conversation| conversation.id == conversation_id)
-                            {
-                                conversation.updated_at = now_millis();
-                                conversation.messages.push(Message {
-                                    id: new_id("message"),
-                                    role: "assistant".into(),
-                                    content: partial,
-                                    created_at: now_millis(),
-                                    status: status.into(),
-                                    sources: Vec::new(),
-                                    usage: None,
-                                });
+                    if let Ok(response) =
+                        ipc::command::<_, BootstrapResponse>("bootstrap", &EmptyArgs {}).await
+                    {
+                        let active_id = self.active_id.get_clone_untracked();
+                        let active_exists = response
+                            .workspace
+                            .conversations
+                            .iter()
+                            .any(|conversation| conversation.id == active_id);
+                        batch(move || {
+                            self.workspace.set(response.workspace);
+                            self.storage_writable.set(response.storage_writable);
+                            self.storage_label.set(response.storage_label);
+                            if !active_exists {
+                                self.active_id.set(String::new());
+                                self.selected_sources.set(Vec::new());
                             }
                         });
-                        self.persist_workspace();
                     }
                     batch(move || {
-                        self.stage.set(status.into());
-                        self.reset_stream();
+                        self.is_running.set(false);
+                        self.active_request.set(String::new());
+                        self.active_assistant_message.set(String::new());
+                        self.stage.set("failed".into());
                         self.last_failed_question.set(question);
                     });
-                    let mut error = error;
-                    if error.contains("인증") || error.contains("API 키") {
-                        if let Err(clear_error) =
-                            ipc::command_unit("clear_api_key", &EmptyArgs {}).await
-                        {
-                            error = format!("{error} {clear_error}");
-                            let _ = ipc::command_unit("forget_api_key", &EmptyArgs {}).await;
-                        }
-                        batch(move || {
-                            self.key_configured.set(false);
-                            self.panel.set(Panel::Settings);
-                        });
-                    }
                     self.show_toast(error, "error");
                 }
             }
         });
+    }
+
+    pub(in crate::app) fn apply_research_job(self, job: ResearchJob) {
+        if job.status == "running" {
+            if self.active_request.get_clone_untracked() != job.request_id {
+                batch(move || {
+                    self.active_request.set(job.request_id.clone());
+                    self.active_assistant_message
+                        .set(job.assistant_message_id.clone());
+                    self.is_running.set(true);
+                    self.last_failed_question.set(String::new());
+                    self.reset_stream();
+                });
+            }
+            batch(move || {
+                self.stage.set(job.stage);
+                self.streamed_text.set(job.partial_answer);
+            });
+            return;
+        }
+
+        let is_current = self.active_request.get_clone_untracked() == job.request_id;
+        let merged = self.merge_terminal_research_job(&job);
+        if is_current {
+            batch(move || {
+                self.is_running.set(false);
+                self.active_request.set(String::new());
+                self.active_assistant_message.set(String::new());
+                self.stage.set(job.stage.clone());
+                self.reset_stream();
+            });
+        }
+
+        if merged {
+            let request_id = job.request_id.clone();
+            spawn_local(async move {
+                let _ =
+                    ipc::command::<_, bool>("discard_research_job", &RequestIdArgs { request_id })
+                        .await;
+            });
+        }
+    }
+
+    fn merge_terminal_research_job(self, job: &ResearchJob) -> bool {
+        let existing = self.workspace.with_untracked(|workspace| {
+            workspace.conversations.iter().any(|conversation| {
+                conversation
+                    .messages
+                    .iter()
+                    .any(|message| message.id == job.assistant_message_id)
+            })
+        });
+        if existing {
+            if job.workspace_persisted {
+                self.workspace.update_silent(|workspace| {
+                    workspace.revision = workspace.revision.max(job.workspace_revision);
+                });
+            }
+            return true;
+        }
+
+        let (content, sources, usage, status) = if let Some(response) = &job.result {
+            (
+                response.answer.clone(),
+                response.sources.clone(),
+                response.usage.clone(),
+                "complete".to_string(),
+            )
+        } else if !job.partial_answer.trim().is_empty() {
+            (
+                job.partial_answer.clone(),
+                Vec::new(),
+                None,
+                if job.status == "cancelled" {
+                    "cancelled".to_string()
+                } else {
+                    "failed".to_string()
+                },
+            )
+        } else {
+            (String::new(), Vec::new(), None, job.status.clone())
+        };
+
+        let conversation_exists = self.workspace.with_untracked(|workspace| {
+            workspace
+                .conversations
+                .iter()
+                .any(|conversation| conversation.id == job.conversation_id)
+        });
+        if !conversation_exists {
+            self.show_toast(
+                "완료된 연구가 있지만 대상 대화가 삭제되어 결과를 적용하지 않았습니다.",
+                "warning",
+            );
+            return true;
+        }
+
+        if job.workspace_persisted {
+            self.reload_workspace_after_research(job.workspace_revision);
+        } else if !content.is_empty() {
+            let conversation_id = job.conversation_id.clone();
+            let assistant_message_id = job.assistant_message_id.clone();
+            self.workspace.update(|value| {
+                if let Some(conversation) = value
+                    .conversations
+                    .iter_mut()
+                    .find(|conversation| conversation.id == conversation_id)
+                {
+                    conversation.updated_at = now_millis();
+                    conversation.messages.push(Message {
+                        id: assistant_message_id,
+                        role: "assistant".into(),
+                        content,
+                        created_at: now_millis(),
+                        status,
+                        sources: sources.clone(),
+                        usage,
+                    });
+                }
+            });
+            self.persist_workspace();
+        }
+
+        if job.status == "complete" && job.workspace_persisted {
+            batch(move || {
+                self.selected_sources.set(sources);
+                self.last_failed_question.set(String::new());
+            });
+        } else {
+            self.last_failed_question.set(job.question.clone());
+            if let Some(error) = &job.error {
+                self.show_toast(error.clone(), "error");
+            }
+        }
+        true
+    }
+
+    fn reload_workspace_after_research(self, expected_revision: u64) {
+        spawn_local(async move {
+            match ipc::command::<_, BootstrapResponse>("bootstrap", &EmptyArgs {}).await {
+                Ok(response) if response.workspace_revision >= expected_revision => {
+                    let active_id = self.active_id.get_clone_untracked();
+                    let sources = source_list(&response.workspace, &active_id);
+                    self.workspace.set(response.workspace);
+                    self.storage_writable.set(response.storage_writable);
+                    self.storage_label.set(response.storage_label);
+                    self.selected_sources.set(sources);
+                }
+                Ok(_) => self.show_toast(
+                    "완료된 답변의 최신 대화 기록을 불러오지 못했습니다. 앱을 다시 열어 주세요.",
+                    "warning",
+                ),
+                Err(error) => self.show_toast(error, "error"),
+            }
+        });
+    }
+
+    pub(in crate::app) fn restore_research_jobs(self, jobs: Vec<ResearchJob>) {
+        let mut running = None;
+        for job in jobs {
+            if job.status == "running" {
+                if running
+                    .as_ref()
+                    .is_none_or(|current: &ResearchJob| job.updated_at > current.updated_at)
+                {
+                    running = Some(job);
+                }
+            } else {
+                self.apply_research_job(job);
+            }
+        }
+        if let Some(job) = running {
+            self.apply_research_job(job);
+        }
     }
 
     pub(in crate::app) fn cancel_request(self) {

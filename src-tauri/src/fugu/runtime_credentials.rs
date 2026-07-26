@@ -53,7 +53,6 @@ impl FuguRuntime {
             api_key_store,
             key_update: Mutex::new(()),
             credential_notice: Mutex::new(credential_notice),
-            active: Mutex::new(HashMap::new()),
         })
     }
 
@@ -134,20 +133,12 @@ impl FuguRuntime {
             .key_update
             .lock()
             .map_err(|_| "API 키 삭제 작업을 잠글 수 없습니다.".to_string())?;
-        let active = self
-            .active
-            .lock()
-            .map_err(|_| "요청 상태를 잠글 수 없습니다.".to_string())?;
         let mut stored = self
             .api_key
             .lock()
             .map_err(|_| "API 키 저장소를 잠글 수 없습니다.".to_string())?;
         *stored = None;
-        for cancellation in active.values() {
-            cancellation.cancel();
-        }
         drop(stored);
-        drop(active);
         match self.api_key_store.delete() {
             Ok(()) => {
                 self.set_credential_notice(None);
@@ -166,11 +157,6 @@ impl FuguRuntime {
         };
         if let Ok(mut stored) = self.api_key.lock() {
             *stored = None;
-        }
-        if let Ok(active) = self.active.lock() {
-            for cancellation in active.values() {
-                cancellation.cancel();
-            }
         }
     }
 

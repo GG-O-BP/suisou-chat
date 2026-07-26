@@ -92,6 +92,7 @@ pub struct Usage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapResponse {
     pub workspace: Workspace,
+    pub workspace_revision: u64,
     pub key_configured: bool,
     pub credential_notice: Option<String>,
     pub recovery_notice: Option<String>,
@@ -123,16 +124,42 @@ pub struct ResearchResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectionInfo {
-    pub message: String,
-    pub models: Vec<String>,
+pub struct ResearchJob {
+    pub request_id: String,
+    pub conversation_id: String,
+    #[serde(default)]
+    pub workspace_revision: u64,
+    #[serde(default)]
+    pub workspace_persisted: bool,
+    pub assistant_message_id: String,
+    pub question: String,
+    pub mode: String,
+    pub status: String,
+    pub stage: String,
+    pub partial_answer: String,
+    pub result: Option<ResearchResponse>,
+    pub error: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResearchEvent {
+pub struct StartResearchResponse {
+    pub job: ResearchJob,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchJobUpdate {
     pub request_id: String,
     pub kind: String,
     pub value: String,
+    pub job: Option<ResearchJob>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionInfo {
+    pub message: String,
+    pub models: Vec<String>,
 }
 
 pub fn validate_workspace(workspace: &Workspace) -> Result<(), String> {

@@ -9,6 +9,7 @@ pub(crate) fn bootstrap(state: State<'_, AppState>) -> BootstrapResponse {
     let storage_writable = loaded.warning.is_none() || loaded.recovered_from_backup;
     let recovery_notice = loaded.warning.clone();
     BootstrapResponse {
+        workspace_revision: loaded.workspace.revision,
         workspace: loaded.workspace,
         key_configured: state.fugu.has_key(),
         credential_notice: state.fugu.credential_notice(),
@@ -24,19 +25,26 @@ pub(crate) fn bootstrap(state: State<'_, AppState>) -> BootstrapResponse {
 
 #[tauri::command]
 pub(crate) fn save_workspace(
-    mut workspace: Workspace,
+    workspace: Workspace,
     state: State<'_, AppState>,
 ) -> Result<u64, String> {
-    let _guard = state
-        .save_lock
+    save_workspace_snapshot(workspace, &state.workspace_path, &state.save_lock)
+}
+
+pub(crate) fn save_workspace_snapshot(
+    mut workspace: Workspace,
+    workspace_path: &std::path::Path,
+    save_lock: &std::sync::Mutex<()>,
+) -> Result<u64, String> {
+    let _guard = save_lock
         .lock()
         .map_err(|_| "저장 작업을 잠글 수 없습니다.".to_string())?;
-    let loaded = storage::load_workspace(&state.workspace_path);
+    let loaded = storage::load_workspace(workspace_path);
     if loaded.warning.is_some() && !loaded.recovered_from_backup {
         return Err("기존 대화 기록을 복구하기 전에는 덮어쓸 수 없습니다.".into());
     }
     workspace.revision = next_workspace_revision(workspace.revision, loaded.workspace.revision)?;
-    storage::save_workspace(&state.workspace_path, &workspace)?;
+    storage::save_workspace(workspace_path, &workspace)?;
     Ok(workspace.revision)
 }
 
