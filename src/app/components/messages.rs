@@ -109,9 +109,6 @@ pub(crate) fn StreamingMessage() -> View {
             .with(|workspace| workspace.settings.last_mode.clone())
     });
     let is_creative = create_selector(move || selected_mode.get_clone() == "create");
-    let stage_progress = create_selector(move || stage_index(&state.stage.get_clone()));
-    let stage_percent =
-        create_selector(move || ((stage_index(&state.stage.get_clone()) + 1) * 25).max(0));
     view! {
         (if state.is_running.get() {
             view! {
@@ -125,62 +122,146 @@ pub(crate) fn StreamingMessage() -> View {
                         view! {
                             div(
                                 class=move || format!("research-progress stage-{}", state.stage.get_clone()),
-                                role="progressbar",
-                                aria-label="답변 준비 상태",
-                                aria-valuemin="0",
-                                aria-valuemax="100",
-                                aria-valuenow=move || stage_percent.get().to_string()
+                                role="status",
+                                aria-label="실시간 처리 관측"
                             ) {
-                                div(class="dive-telemetry") {
-                                    div {
-                                        small { "LIVE DEPTH" }
-                                        strong { (move || format!("{:04} M", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
+                                div(class="observation-header") {
+                                    div(class="observation-title") {
+                                        small { "PROCESS OBSERVATION" }
+                                        strong {
+                                            (move || stage_label(
+                                                &state.stage.get_clone(),
+                                                &selected_mode.get_clone()
+                                            ))
+                                        }
                                     }
-                                    span(class="telemetry-signal") { "● SIGNAL STABLE" }
+                                    div(class="observation-time") {
+                                        small { "ELAPSED" }
+                                        strong {
+                                            (move || format_elapsed(
+                                                state.research_clock.get().saturating_sub(
+                                                    state.research_started_at.get()
+                                                )
+                                            ))
+                                        }
+                                    }
                                 }
-                                div(class="depth-gauge", aria-hidden="true") {
-                                    span(class="depth-line") {}
-                                    span(class="depth-fill") {}
-                                    span(class="depth-capsule") { (icon("deep")) }
-                                    span(class="depth-reading") { (move || format!("{}m", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
+                                div(class="observation-status") {
+                                    span(class="observation-beacon", aria-hidden="true") {}
+                                    span { "REQUEST ACTIVE" }
+                                    span(class="observation-separator", aria-hidden="true") {}
+                                    span {
+                                        (move || format!(
+                                            "현재 상태 {}",
+                                            format_elapsed(
+                                                state.research_clock.get().saturating_sub(
+                                                    state.stage_started_at.get()
+                                                )
+                                            )
+                                        ))
+                                    }
                                 }
-                                div(class="progress-steps") {
-                                    ProgressStep(
-                                        index="01",
-                                        code="SEAL",
-                                        label="Sakana 연결",
-                                        active=MaybeDyn::from(move || stage_progress.get() >= 0),
-                                        current=MaybeDyn::from(move || state.stage.get_clone() == "connecting")
-                                    )
-                                    ProgressStep(
-                                        index="02",
-                                        code=if is_creative.get() { "SPARK" } else { "SONAR" },
-                                        label=if is_creative.get() { "아이디어 발상" } else { "웹 자료 검색" },
-                                        active=MaybeDyn::from(move || stage_progress.get() >= 1),
-                                        current=MaybeDyn::from(move || matches!(state.stage.get_clone().as_str(), "searching" | "creating"))
-                                    )
-                                    ProgressStep(
-                                        index="03",
-                                        code=if is_creative.get() { "FORM" } else { "CURRENT" },
-                                        label=if is_creative.get() { "구성과 목소리" } else { "출처 비교" },
-                                        active=MaybeDyn::from(move || stage_progress.get() >= 2),
-                                        current=MaybeDyn::from(move || state.stage.get_clone() == "reasoning")
-                                    )
-                                    ProgressStep(
-                                        index="04",
-                                        code=if is_creative.get() { "INK" } else { "LIGHT" },
-                                        label=if is_creative.get() { "창작물 작성" } else { "답변 작성" },
-                                        active=MaybeDyn::from(move || stage_progress.get() >= 3),
-                                        current=MaybeDyn::from(move || state.stage.get_clone() == "writing")
-                                    )
+                                div(class="observation-timeline", aria-hidden="true") {
+                                    div(class="timeline-ruler") {
+                                        span { "START" }
+                                        span { "NOW" }
+                                    }
+                                    div(class="timeline-track") {
+                                        span(class="timeline-past") {}
+                                        (move || {
+                                            state.research_events
+                                                .get_clone()
+                                                .into_iter()
+                                                .enumerate()
+                                                .map(|(index, event)| {
+                                                    let position = event_position(
+                                                        event.occurred_at,
+                                                        state.research_started_at.get(),
+                                                        state.research_clock.get(),
+                                                    );
+                                                    view! {
+                                                        span(
+                                                            class="timeline-event",
+                                                            style=format!("left: {position:.2}%"),
+                                                            data-index=(index + 1).to_string()
+                                                        ) {}
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()
+                                        })
+                                        span(class="timeline-now") {}
+                                    }
+                                }
+                                p(class="observation-description") {
+                                    (move || stage_description(
+                                        &state.stage.get_clone(),
+                                        &selected_mode.get_clone()
+                                    ))
+                                }
+                                div(class="event-register") {
+                                    div(class="register-heading") {
+                                        span { "EVENT REGISTER" }
+                                        span { "관측된 상태만 기록" }
+                                    }
+                                    ol {
+                                        (move || {
+                                            let started_at = state.research_started_at.get();
+                                            state.research_events
+                                                .get_clone()
+                                                .into_iter()
+                                                .map(|event| {
+                                                    let stage = event.value;
+                                                    let is_current =
+                                                        state.stage.get_clone() == stage;
+                                                    let event_class = if is_current {
+                                                        "register-event current"
+                                                    } else {
+                                                        "register-event complete"
+                                                    };
+                                                    let code = event_code(&stage);
+                                                    let label = stage_label(
+                                                        &stage,
+                                                        &selected_mode.get_clone(),
+                                                    );
+                                                    view! {
+                                                        li(class=event_class) {
+                                                            time {
+                                                                (format_elapsed(
+                                                                    event.occurred_at.saturating_sub(
+                                                                        started_at
+                                                                    )
+                                                                ))
+                                                            }
+                                                            span(class="register-code") {
+                                                                (code)
+                                                            }
+                                                            strong {
+                                                                (label)
+                                                            }
+                                                        }
+                                                    }
+                                                })
+                                                .collect::<Vec<_>>()
+                                        })
+                                    }
                                 }
                             }
                         }
                     } else {
                         view! {
                             div(class="stream-reading-label") {
-                                span { "FINDINGS ILLUMINATING" }
-                                span { (move || format!("{:04} M", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
+                                span { (if is_creative.get() { "OUTPUT ACTIVE" } else { "ANSWER STREAM ACTIVE" }) }
+                                span {
+                                    (move || format!(
+                                        "{} · {}자",
+                                        format_elapsed(
+                                            state.research_clock.get().saturating_sub(
+                                                state.research_started_at.get()
+                                            )
+                                        ),
+                                        state.streamed_text.with(|text| text.chars().count())
+                                    ))
+                                }
                             }
                             (move || {
                                 let html = render_streaming_markdown(&state.streamed_text.get_clone());
@@ -201,36 +282,6 @@ pub(crate) fn StreamingMessage() -> View {
         } else {
             View::default()
         })
-    }
-}
-
-#[derive(Props)]
-pub(crate) struct ProgressStepProps {
-    index: &'static str,
-    code: &'static str,
-    label: &'static str,
-    active: MaybeDyn<bool>,
-    current: MaybeDyn<bool>,
-}
-
-#[component]
-pub(crate) fn ProgressStep(props: ProgressStepProps) -> View {
-    let active_for_class = props.active.clone();
-    let active_for_icon = props.active;
-    let current_for_class = props.current.clone();
-    let current_for_aria = props.current;
-    view! {
-        div(
-            class=move || format!("progress-step {} {}", if active_for_class.get() { "active" } else { "" }, if current_for_class.get() { "current" } else { "" }),
-            aria-current=move || if current_for_aria.get() { "step" } else { "false" }
-        ) {
-            span(class="step-index") { (props.index) }
-            span(class="step-dot") { (if active_for_icon.get() { icon("check") } else { View::default() }) }
-            span(class="step-copy") {
-                small { (props.code) }
-                strong { (props.label) }
-            }
-        }
     }
 }
 

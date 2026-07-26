@@ -87,12 +87,21 @@ impl AppState {
         let assistant_message_id = new_id("message");
         let active_request_id = request_id.clone();
         let active_assistant_id = assistant_message_id.clone();
+        let started_at = now_millis();
         batch(move || {
             self.composer.set(String::new());
             self.last_failed_question.set(String::new());
             self.reset_stream();
             self.selected_sources.set(Vec::new());
             self.stage.set("connecting".into());
+            self.research_started_at.set(started_at);
+            self.stage_started_at.set(started_at);
+            self.research_clock.set(started_at);
+            self.research_events.set(vec![ResearchEvent {
+                kind: "stage".into(),
+                value: "connecting".into(),
+                occurred_at: started_at,
+            }]);
             self.is_running.set(true);
             self.active_request.set(active_request_id);
             self.active_assistant_message.set(active_assistant_id);
@@ -162,7 +171,7 @@ impl AppState {
                         self.is_running.set(false);
                         self.active_request.set(String::new());
                         self.active_assistant_message.set(String::new());
-                        self.stage.set("failed".into());
+                        self.observe_stage("failed".into(), now_millis());
                         self.last_failed_question.set(question);
                     });
                     self.show_toast(error, "error");
@@ -174,30 +183,29 @@ impl AppState {
     pub(in crate::app) fn apply_research_job(self, job: ResearchJob) {
         if job.status == "running" {
             if self.active_request.get_clone_untracked() != job.request_id {
+                let request_id = job.request_id.clone();
+                let assistant_message_id = job.assistant_message_id.clone();
                 batch(move || {
-                    self.active_request.set(job.request_id.clone());
-                    self.active_assistant_message
-                        .set(job.assistant_message_id.clone());
+                    self.active_request.set(request_id);
+                    self.active_assistant_message.set(assistant_message_id);
                     self.is_running.set(true);
                     self.last_failed_question.set(String::new());
                     self.reset_stream();
                 });
             }
-            batch(move || {
-                self.stage.set(job.stage);
-                self.streamed_text.set(job.partial_answer);
-            });
+            self.restore_research_observation(&job);
+            self.streamed_text.set(job.partial_answer);
             return;
         }
 
         let is_current = self.active_request.get_clone_untracked() == job.request_id;
         let merged = self.merge_terminal_research_job(&job);
         if is_current {
+            self.restore_research_observation(&job);
             batch(move || {
                 self.is_running.set(false);
                 self.active_request.set(String::new());
                 self.active_assistant_message.set(String::new());
-                self.stage.set(job.stage.clone());
                 self.reset_stream();
             });
         }
@@ -354,5 +362,53 @@ impl AppState {
                 Err(error) => self.show_toast(error, "error"),
             }
         });
+    }
+
+    pub(in crate::app) fn observe_stage(self, stage: String, occurred_at: u64) {
+        let changed = self.stage.get_clone_untracked() != stage;
+        if changed {
+            self.stage.set(stage.clone());
+            self.stage_started_at.set(occurred_at);
+        }
+        self.research_clock.set(occurred_at);
+        if changed {
+            self.research_events.update(|events| {
+                if events
+                    .last()
+                    .is_some_and(|event| event.kind == "stage" && event.value == stage)
+                {
+                    return;
+                }
+                events.push(ResearchEvent {
+                    kind: "stage".into(),
+                    value: stage,
+                    occurred_at,
+                });
+                if events.len() > 64 {
+                    events.drain(..events.len() - 64);
+                }
+            });
+        }
+    }
+
+    fn restore_research_observation(self, job: &ResearchJob) {
+        let mut events = job.events.clone();
+        if events.is_empty() {
+            events.push(ResearchEvent {
+                kind: "stage".into(),
+                value: job.stage.clone(),
+                occurred_at: job.created_at,
+            });
+        }
+        let stage_started_at = events
+            .iter()
+            .rev()
+            .find(|event| event.kind == "stage" && event.value == job.stage)
+            .map_or(job.updated_at, |event| event.occurred_at);
+        self.stage.set(job.stage.clone());
+        self.research_started_at.set(job.created_at);
+        self.stage_started_at.set(stage_started_at);
+        self.research_clock.set(now_millis());
+        self.research_events.set(events);
     }
 }

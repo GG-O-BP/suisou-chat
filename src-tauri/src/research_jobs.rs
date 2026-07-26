@@ -1,6 +1,6 @@
 use crate::fugu::FuguRuntime;
 use crate::models::{
-    Message, ResearchJob, ResearchJobUpdate, ResearchRequest, ResearchResponse,
+    Message, ResearchEvent, ResearchJob, ResearchJobUpdate, ResearchRequest, ResearchResponse,
     StartResearchResponse,
 };
 use crate::storage;
@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 const RESEARCH_JOB_EVENT: &str = "research-job-event";
 const JOURNAL_VERSION: u32 = 1;
 const MAX_JOBS: usize = 200;
+const MAX_RESEARCH_EVENTS: usize = 64;
 const MAX_PARTIAL_ANSWER_BYTES: usize = 4 * 1024 * 1024;
 const CHECKPOINT_INTERVAL_MILLIS: u64 = 1_000;
 const CHECKPOINT_BYTES: usize = 16 * 1024;
@@ -161,6 +162,11 @@ impl ResearchJobManager {
             error: None,
             created_at: now,
             updated_at: now,
+            events: vec![ResearchEvent {
+                kind: "stage".into(),
+                value: "connecting".into(),
+                occurred_at: now,
+            }],
         };
         let cancellation = CancellationToken::new();
         {
@@ -352,7 +358,18 @@ impl ResearchJobManager {
             let mut background_update = None;
             match kind {
                 "stage" => {
+                    if active.job.stage == value {
+                        return;
+                    }
                     active.job.stage = value.to_owned();
+                    push_research_event(
+                        &mut active.job.events,
+                        ResearchEvent {
+                            kind: "stage".into(),
+                            value: value.to_owned(),
+                            occurred_at: now,
+                        },
+                    );
                     persist = true;
                     if active.background_started {
                         background_update = Some(active.job.clone());
@@ -416,6 +433,14 @@ impl ResearchJobManager {
                 .ok_or_else(|| "완료할 연구 작업을 찾지 못했습니다.".to_string())?;
             active.job.status = "complete".into();
             active.job.stage = "done".into();
+            push_research_event(
+                &mut active.job.events,
+                ResearchEvent {
+                    kind: "stage".into(),
+                    value: "done".into(),
+                    occurred_at: now_millis(),
+                },
+            );
             active.job.partial_answer = response.answer.clone();
             active.job.result = Some(response);
             active.job.error = None;
@@ -450,6 +475,14 @@ impl ResearchJobManager {
                 .ok_or_else(|| "완료할 연구 작업을 찾지 못했습니다.".to_string())?;
             active.job.status = status.to_owned();
             active.job.stage = status.to_owned();
+            push_research_event(
+                &mut active.job.events,
+                ResearchEvent {
+                    kind: "stage".into(),
+                    value: status.to_owned(),
+                    occurred_at: now_millis(),
+                },
+            );
             active.job.error = Some(error);
             active.job.updated_at = now_millis();
             active.job.clone()
@@ -643,6 +676,19 @@ fn validate_request_id(request_id: &str) -> Result<(), String> {
     validate_context_id(request_id, "요청")
 }
 
+fn push_research_event(events: &mut Vec<ResearchEvent>, event: ResearchEvent) {
+    if events
+        .last()
+        .is_some_and(|previous| previous.kind == event.kind && previous.value == event.value)
+    {
+        return;
+    }
+    events.push(event);
+    if events.len() > MAX_RESEARCH_EVENTS {
+        events.drain(..events.len() - MAX_RESEARCH_EVENTS);
+    }
+}
+
 fn load_journal(path: &Path) -> Result<ResearchJobJournal, String> {
     if !path.exists() {
         return Ok(ResearchJobJournal::default());
@@ -747,6 +793,7 @@ mod tests {
             error: None,
             created_at: 1,
             updated_at: 2,
+            events: Vec::new(),
         }
     }
 
@@ -754,13 +801,56 @@ mod tests {
     fn journal_round_trip_preserves_terminal_jobs() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("jobs.json");
+        let mut completed = job("complete");
+        completed.events = vec![ResearchEvent {
+            kind: "stage".into(),
+            value: "writing".into(),
+            occurred_at: 2,
+        }];
         let journal = ResearchJobJournal {
             version: JOURNAL_VERSION,
-            jobs: vec![job("complete")],
+            jobs: vec![completed],
         };
         save_journal(&path, &journal).unwrap();
         let loaded = load_journal(&path).unwrap();
         assert_eq!(loaded.jobs[0].partial_answer, "부분 답변");
+        assert_eq!(loaded.jobs[0].events[0].value, "writing");
+    }
+
+    #[test]
+    fn progress_events_are_ordered_deduplicated_and_bounded() {
+        let mut events = Vec::new();
+        push_research_event(
+            &mut events,
+            ResearchEvent {
+                kind: "stage".into(),
+                value: "connecting".into(),
+                occurred_at: 1,
+            },
+        );
+        push_research_event(
+            &mut events,
+            ResearchEvent {
+                kind: "stage".into(),
+                value: "connecting".into(),
+                occurred_at: 2,
+            },
+        );
+        assert_eq!(events.len(), 1);
+
+        for index in 0..MAX_RESEARCH_EVENTS + 4 {
+            push_research_event(
+                &mut events,
+                ResearchEvent {
+                    kind: "stage".into(),
+                    value: format!("stage-{index}"),
+                    occurred_at: index as u64 + 3,
+                },
+            );
+        }
+        assert_eq!(events.len(), MAX_RESEARCH_EVENTS);
+        assert_eq!(events.last().unwrap().value, "stage-67");
+        assert!(events[0].occurred_at < events.last().unwrap().occurred_at);
     }
 
     #[test]

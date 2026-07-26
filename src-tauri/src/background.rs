@@ -41,6 +41,7 @@ mod android {
                 error: None,
                 created_at: 0,
                 updated_at: 0,
+                events: Vec::new(),
             };
             let _ = send_service_intent("STOP", &job);
         }

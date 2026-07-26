@@ -128,6 +128,16 @@ pub struct ResearchJob {
     pub error: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub events: Vec<ResearchEvent>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ResearchEvent {
+    pub kind: String,
+    pub value: String,
+    pub occurred_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

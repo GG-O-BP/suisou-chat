@@ -6,6 +6,26 @@ use crate::app::state::EmptyArgs;
 pub(super) fn AppRuntime() -> View {
     let state = use_context::<AppState>();
 
+    on_mount(move || {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let callback = Closure::<dyn FnMut()>::new(move || {
+            if state.is_running.get_untracked() {
+                state.research_clock.set(now_millis());
+            }
+        });
+        if let Ok(interval) = window.set_interval_with_callback_and_timeout_and_arguments_0(
+            callback.as_ref().unchecked_ref(),
+            1_000,
+        ) {
+            on_cleanup(move || {
+                window.clear_interval_with_handle(interval);
+                drop(callback);
+            });
+        }
+    });
+
     spawn_local_scoped(async move {
         match ipc::listen::<ResearchJobUpdate, _>("research-job-event", move |event| {
             if state.is_loading.get_untracked() {
@@ -18,7 +38,7 @@ pub(super) fn AppRuntime() -> View {
                     }
                 }
                 "stage" if event.request_id == state.active_request.get_clone_untracked() => {
-                    state.stage.set(event.value);
+                    state.observe_stage(event.value, now_millis());
                 }
                 "delta" if event.request_id == state.active_request.get_clone_untracked() => {
                     state.queue_stream_delta(event.request_id, event.value);

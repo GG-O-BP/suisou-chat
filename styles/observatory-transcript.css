@@ -361,3 +361,274 @@
   box-shadow: 0 0 0 5px rgba(223, 182, 95, 0.12);
 }
 
+/* Process chronograph
+   Progress is represented by observed events and elapsed time rather than
+   invented completion percentages or decorative depth. */
+.research-progress {
+  display: block;
+  min-height: 0;
+  padding: 1.25rem 1.35rem 1.15rem;
+  color: var(--instrument-ink);
+  background:
+    linear-gradient(rgba(139, 222, 207, 0.042) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139, 222, 207, 0.035) 1px, transparent 1px),
+    linear-gradient(145deg, var(--instrument), var(--instrument-deep));
+  background-size: 36px 36px, 36px 36px, auto;
+  border: 1px solid rgba(157, 224, 211, 0.16);
+  border-radius: 4px 18px 18px 18px;
+}
+
+.research-progress::before {
+  inset: 0;
+  width: auto;
+  height: auto;
+  background:
+    linear-gradient(110deg, transparent 58%, rgba(115, 210, 193, 0.05)),
+    radial-gradient(circle at 85% 18%, rgba(71, 190, 182, 0.11), transparent 28%);
+  border: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.observation-header,
+.observation-status,
+.timeline-ruler,
+.register-heading,
+.register-event {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+}
+
+.observation-header {
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(188, 231, 219, 0.14);
+}
+
+.observation-title small,
+.observation-title strong,
+.observation-time small,
+.observation-time strong {
+  display: block;
+}
+
+.observation-title small,
+.observation-time small,
+.observation-status,
+.timeline-ruler,
+.register-heading,
+.register-event time,
+.register-code {
+  font-family: var(--font-mono);
+}
+
+.observation-title small,
+.observation-time small {
+  color: rgba(220, 244, 236, 0.47);
+  font-size: 0.5rem;
+  letter-spacing: 0.13em;
+}
+
+.observation-title strong {
+  margin-top: 0.24rem;
+  color: #e2f7f0;
+  font-size: 0.92rem;
+  font-weight: 550;
+  letter-spacing: 0.015em;
+}
+
+.observation-time {
+  min-width: 88px;
+  text-align: right;
+}
+
+.observation-time strong {
+  margin-top: 0.16rem;
+  color: #9be6d7;
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 400;
+  letter-spacing: 0.055em;
+  font-variant-numeric: tabular-nums;
+}
+
+.observation-status {
+  min-height: 38px;
+  gap: 0.45rem;
+  color: rgba(220, 244, 236, 0.62);
+  font-size: 0.49rem;
+  letter-spacing: 0.085em;
+}
+
+.observation-beacon {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  background: #80dec9;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(99, 207, 193, 0.09), 0 0 12px rgba(99, 207, 193, 0.35);
+}
+
+.observation-separator {
+  width: 1px;
+  height: 12px;
+  margin: 0 0.2rem;
+  background: rgba(188, 231, 219, 0.16);
+}
+
+.observation-timeline {
+  position: relative;
+  z-index: 1;
+  padding: 0.6rem 0 0.8rem;
+}
+
+.timeline-ruler {
+  justify-content: space-between;
+  color: rgba(220, 244, 236, 0.38);
+  font-size: 0.45rem;
+  letter-spacing: 0.12em;
+}
+
+.timeline-track {
+  position: relative;
+  height: 44px;
+  margin-top: 0.25rem;
+  overflow: visible;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(220, 244, 236, 0.16) 0 1px,
+      transparent 1px 8%
+    ) left 18px / 100% 8px no-repeat;
+  border-bottom: 1px solid rgba(220, 244, 236, 0.18);
+}
+
+.timeline-past {
+  position: absolute;
+  right: 4%;
+  bottom: -1px;
+  left: 4%;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(99, 207, 193, 0.48), rgba(99, 207, 193, 0.15));
+}
+
+.timeline-event {
+  position: absolute;
+  bottom: -4px;
+  width: 7px;
+  height: 7px;
+  background: var(--instrument);
+  border: 1px solid #85dfcc;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 3px rgba(99, 207, 193, 0.07);
+}
+
+.timeline-event::before {
+  position: absolute;
+  right: 2px;
+  bottom: 7px;
+  width: 1px;
+  height: 18px;
+  content: "";
+  background: linear-gradient(transparent, rgba(133, 223, 204, 0.46));
+}
+
+.timeline-now {
+  position: absolute;
+  right: 4%;
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  background: #9be6d7;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 5px rgba(99, 207, 193, 0.08),
+    0 0 18px rgba(99, 207, 193, 0.32);
+}
+
+.timeline-now::before {
+  position: absolute;
+  right: 4px;
+  bottom: 10px;
+  width: 1px;
+  height: 32px;
+  content: "";
+  background: linear-gradient(transparent, #9be6d7);
+}
+
+.observation-description {
+  position: relative;
+  z-index: 1;
+  max-width: 640px;
+  margin: 0;
+  color: rgba(226, 247, 240, 0.77);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+
+.event-register {
+  position: relative;
+  z-index: 1;
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(188, 231, 219, 0.11);
+}
+
+.register-heading {
+  justify-content: space-between;
+  color: rgba(220, 244, 236, 0.42);
+  font-size: 0.45rem;
+  letter-spacing: 0.12em;
+}
+
+.event-register ol {
+  display: grid;
+  gap: 0;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.register-event {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: 58px 72px minmax(0, 1fr);
+  gap: 0.65rem;
+  color: rgba(220, 244, 236, 0.49);
+  border-bottom: 1px solid rgba(188, 231, 219, 0.07);
+}
+
+.register-event:last-child {
+  border-bottom: 0;
+}
+
+.register-event time,
+.register-code {
+  font-size: 0.47rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.register-code {
+  letter-spacing: 0.08em;
+}
+
+.register-event strong {
+  font-size: 0.69rem;
+  font-weight: 500;
+}
+
+.register-event.complete {
+  color: rgba(220, 244, 236, 0.45);
+}
+
+.register-event.current {
+  color: #e2f7f0;
+}
+
+.register-event.current .register-code {
+  color: #85dfcc;
+}

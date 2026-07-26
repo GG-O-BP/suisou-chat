@@ -597,3 +597,86 @@
   }
 }
 
+@media (max-width: 620px) {
+  .research-progress {
+    padding: 0.85rem 0.8rem 0.8rem;
+  }
+
+  .observation-header {
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding-bottom: 0.65rem;
+  }
+
+  .observation-title strong {
+    font-size: 0.78rem;
+  }
+
+  .observation-time {
+    min-width: 72px;
+  }
+
+  .observation-time strong {
+    font-size: 1rem;
+  }
+
+  .observation-status {
+    min-height: 34px;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    line-height: 1.4;
+  }
+
+  .observation-separator {
+    display: none;
+  }
+
+  .observation-timeline {
+    padding-top: 0.35rem;
+  }
+
+  .timeline-track {
+    height: 34px;
+  }
+
+  .timeline-now::before {
+    height: 23px;
+  }
+
+  .observation-description {
+    font-size: 0.7rem;
+    line-height: 1.6;
+  }
+
+  .event-register {
+    margin-top: 0.75rem;
+  }
+
+  .register-heading span:last-child {
+    display: none;
+  }
+
+  .register-event {
+    min-height: 32px;
+    grid-template-columns: 50px 62px minmax(0, 1fr);
+    gap: 0.4rem;
+  }
+
+  .register-event strong {
+    font-size: 0.62rem;
+    line-height: 1.35;
+  }
+
+  .mobile-dive-control {
+    background:
+      linear-gradient(90deg, rgba(99, 207, 193, 0.07), transparent 50%),
+      var(--instrument);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-now,
+  .observation-beacon {
+    box-shadow: none;
+  }
+}

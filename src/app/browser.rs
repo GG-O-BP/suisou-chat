@@ -130,47 +130,65 @@ pub(super) fn select_value(event: Event) -> Option<String> {
         .map(|element| element.value())
 }
 
-pub(super) fn stage_index(stage: &str) -> i32 {
-    match stage {
-        "connecting" => 0,
-        "searching" | "creating" => 1,
-        "reasoning" => 2,
-        "writing" | "done" => 3,
-        _ => -1,
-    }
-}
-
 pub(super) fn stage_label(stage: &str, mode: &str) -> &'static str {
     match (stage, mode) {
-        ("creating", _) => "아이디어를 빚는 중",
-        ("reasoning", "create") => "구성과 목소리를 다듬는 중",
-        ("writing", "create") => "창작물을 쓰는 중",
+        ("creating", _) => "창작 처리 활성",
+        ("reasoning", "create") => "구성 처리 신호 감지",
+        ("writing", "create") => "창작물 출력 수신 중",
         ("done", "create") => "창작 완료",
-        ("connecting", _) => "Sakana에 연결 중",
-        ("searching", _) => "웹 자료를 찾는 중",
-        ("reasoning", _) => "출처를 비교하는 중",
-        ("writing", _) => "답변을 작성하는 중",
-        ("cancelled", _) => "중단됨",
-        _ => "답변 준비 중",
+        ("connecting", _) => "요청 연결 중",
+        ("searching", _) => "웹 탐색 활성",
+        ("reasoning", _) => "응답 처리 활성",
+        ("writing", _) => "답변 출력 수신 중",
+        ("done", _) => "처리 완료",
+        ("failed" | "interrupted", _) => "처리 중단",
+        ("cancelled", _) => "사용자가 중단함",
+        _ => "응답 처리 중",
     }
 }
 
-pub(super) fn stage_depth(stage: &str, mode: &str) -> i32 {
-    if mode == "create" {
-        return match stage {
-            "connecting" => 120,
-            "creating" | "reasoning" => 360,
-            "writing" | "done" => 720,
-            _ => 0,
-        };
+pub(super) fn stage_description(stage: &str, mode: &str) -> &'static str {
+    match (stage, mode) {
+        ("connecting", _) => "요청을 전달하고 응답 연결을 기다리고 있습니다.",
+        ("searching", _) => "웹 검색 도구의 활동이 관측되었습니다.",
+        ("creating", _) => "창작 요청이 처리 중이며 아직 출력은 시작되지 않았습니다.",
+        ("reasoning", "create") => "API 스트림에서 구성 처리 신호가 관측되었습니다.",
+        ("reasoning", _) => "응답 생성 처리가 활성 상태이며 아직 출력은 시작되지 않았습니다.",
+        ("writing", "create") => "창작물 텍스트가 실제로 수신되고 있습니다.",
+        ("writing", _) => "답변 텍스트가 실제로 수신되고 있습니다.",
+        _ => "관측 가능한 다음 이벤트를 기다리고 있습니다.",
     }
+}
+
+pub(super) fn event_code(stage: &str) -> &'static str {
     match stage {
-        "connecting" => 120,
-        "searching" => 480,
-        "reasoning" => 1_240,
-        "writing" | "done" => 1_880,
-        _ => 0,
+        "connecting" => "REQUEST",
+        "searching" => "WEB TOOL",
+        "creating" | "reasoning" => "PROCESS",
+        "writing" => "OUTPUT",
+        "done" => "COMPLETE",
+        "cancelled" => "STOPPED",
+        "failed" | "interrupted" => "INTERRUPTED",
+        _ => "STATUS",
     }
+}
+
+pub(super) fn format_elapsed(duration_millis: u64) -> String {
+    let total_seconds = duration_millis / 1_000;
+    let hours = total_seconds / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    let seconds = total_seconds % 60;
+    if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+pub(super) fn event_position(occurred_at: u64, started_at: u64, now: u64) -> f64 {
+    let span = now.saturating_sub(started_at).max(1_000);
+    let elapsed = occurred_at.saturating_sub(started_at).min(span);
+    4.0 + (elapsed as f64 / span as f64) * 88.0
 }
 
 pub(super) fn mode_depth(mode: &str) -> &'static str {

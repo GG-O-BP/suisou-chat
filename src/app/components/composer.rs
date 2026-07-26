@@ -80,10 +80,16 @@ pub(crate) fn Composer() -> View {
                     div(class="mobile-dive-control", role="status", aria-live="polite") {
                         span(class="mobile-dive-signal", aria-hidden="true") {}
                         div {
-                            small { "LIVE DIVE" }
+                            small { "PROCESS ACTIVE" }
                             strong { (move || stage_label(&state.stage.get_clone(), &selected_mode.get_clone())) }
                         }
-                        span(class="mobile-dive-depth") { (move || format!("{:04} M", stage_depth(&state.stage.get_clone(), &selected_mode.get_clone()))) }
+                        span(class="mobile-dive-depth") {
+                            (move || format_elapsed(
+                                state.research_clock.get().saturating_sub(
+                                    state.research_started_at.get()
+                                )
+                            ))
+                        }
                         button(
                             r#type="button",
                             class="mobile-stop-button",
