@@ -38,6 +38,15 @@ npm ci
 npm run e2e:doctor
 ```
 
+The doctor checks Cargo, the Tauri CLI, Trunk, Node, npm, and
+Chrome/Chromium. Install the pinned Rust tools used in CI when they are
+missing:
+
+```bash
+cargo install trunk --version 0.21.14 --locked
+cargo install tauri-cli --version 2.11.4 --locked
+```
+
 Linux native tests require an X11 display. In headless CI:
 
 ```bash

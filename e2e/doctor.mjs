@@ -2,19 +2,20 @@ import { accessSync, constants } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const required = [
-  ["cargo", ["--version"]],
-  ["trunk", ["--version"]],
-  ["node", ["--version"]],
-  ["npm", ["--version"]],
+  ["cargo", "cargo", ["--version"]],
+  ["cargo tauri", "cargo", ["tauri", "--version"]],
+  ["trunk", "trunk", ["--version"]],
+  ["node", "node", ["--version"]],
+  ["npm", "npm", ["--version"]],
 ];
 
 let failed = false;
-for (const [command, args] of required) {
+for (const [label, command, args] of required) {
   try {
     const version = execFileSync(command, args, { encoding: "utf8" }).trim();
-    console.log(`ok  ${command}: ${version}`);
+    console.log(`ok  ${label}: ${version}`);
   } catch {
-    console.error(`missing  ${command}`);
+    console.error(`missing  ${label}`);
     failed = true;
   }
 }
