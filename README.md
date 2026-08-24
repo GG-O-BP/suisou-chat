@@ -48,6 +48,23 @@ cargo tauri build --no-bundle
 cargo tauri build
 ```
 
+### E2E 및 성능 테스트
+
+```bash
+npm ci
+npm run e2e:doctor
+npm run e2e
+```
+
+결정론적 브라우저 기능 테스트, 렌더링 성능 예산, 실제 Tauri/Rust IPC
+테스트를 실행합니다. 실제 Sakana 요청은 별도의 opt-in 명령입니다.
+
+```bash
+SUISOU_E2E_LIVE=1 npm run e2e:live
+```
+
+상세 구조와 CI/보안 경계는 [`docs/e2e.md`](docs/e2e.md)를 참고하세요.
+
 앱을 연 뒤 설정에서 Sakana API 키를 입력하고 **연결**을 누르세요. 연결 확인에 성공한 키는 이 기기의 운영체제 보안 저장소에 저장됩니다.
 
 ### Android 빌드

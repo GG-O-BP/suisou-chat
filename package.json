@@ -1,0 +1,24 @@
+{
+  "name": "suisou-chat-e2e",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "e2e": "npm run e2e:browser && npm run e2e:performance && npm run e2e:native",
+    "e2e:doctor": "node e2e/doctor.mjs",
+    "e2e:build:browser": "env -u NO_COLOR trunk build --release --dist dist-e2e --html-output index.html index.e2e.html",
+    "e2e:build:native": "env -u NO_COLOR cargo tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
+    "e2e:browser": "npm run e2e:build:browser && wdio run e2e/wdio.browser.conf.mjs",
+    "e2e:native": "npm run e2e:build:native && wdio run e2e/wdio.native.conf.mjs",
+    "e2e:performance": "npm run e2e:build:browser && wdio run e2e/wdio.performance.conf.mjs",
+    "e2e:live": "npm run e2e:build:native && wdio run e2e/wdio.live.conf.mjs"
+  },
+  "devDependencies": {
+    "@wdio/cli": "9.31.2",
+    "@wdio/local-runner": "9.31.2",
+    "@wdio/mocha-framework": "9.31.2",
+    "@wdio/spec-reporter": "9.31.2"
+  }
+}

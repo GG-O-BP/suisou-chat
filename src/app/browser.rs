@@ -29,29 +29,32 @@ pub(super) fn install_global_shortcuts(state: AppState) {
     let Some(document) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
+    let scope = use_global_scope();
     let handler =
         Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |event: web_sys::KeyboardEvent| {
-            if event.key() == "Escape" {
-                if state.panel.get_untracked() != Panel::None {
-                    event.prevent_default();
-                    state.close_panel();
-                }
-                return;
-            }
-            if event.default_prevented() {
-                return;
-            }
-            let new_conversation_combo = (event.meta_key() || event.ctrl_key())
-                && !event.shift_key()
-                && !event.alt_key()
-                && matches!(event.key().as_str(), "n" | "N");
-            if new_conversation_combo {
-                if state.is_running.get_untracked() || !state.storage_writable.get_untracked() {
+            scope.run_in(|| {
+                if event.key() == "Escape" {
+                    if state.panel.get_untracked() != Panel::None {
+                        event.prevent_default();
+                        state.close_panel();
+                    }
                     return;
                 }
-                event.prevent_default();
-                state.new_conversation();
-            }
+                if event.default_prevented() {
+                    return;
+                }
+                let new_conversation_combo = (event.meta_key() || event.ctrl_key())
+                    && !event.shift_key()
+                    && !event.alt_key()
+                    && matches!(event.key().as_str(), "n" | "N");
+                if new_conversation_combo {
+                    if state.is_running.get_untracked() || !state.storage_writable.get_untracked() {
+                        return;
+                    }
+                    event.prevent_default();
+                    state.new_conversation();
+                }
+            });
         });
     let target = document.clone();
     let _ = target.add_event_listener_with_callback("keydown", handler.as_ref().unchecked_ref());

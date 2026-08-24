@@ -18,10 +18,16 @@ use research_jobs::ResearchJobManager;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+#[cfg(all(feature = "e2e", not(debug_assertions)))]
+compile_error!("the e2e WebDriver server must never be enabled in a release build");
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .setup(|app| {
             let window_builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Suisou — AI Research Companion")

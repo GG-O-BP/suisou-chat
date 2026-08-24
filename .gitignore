@@ -1,6 +1,9 @@
 # Rust and frontend build output
 /dist/
+/dist-e2e/
 /target/
+/node_modules/
+/e2e/artifacts/
 
 # Temporary files and logs
 *.tmp
