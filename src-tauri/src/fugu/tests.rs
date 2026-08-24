@@ -123,6 +123,26 @@ fn accepts_crlf_sse_frames() {
 }
 
 #[test]
+fn reports_incomplete_stream_reasons_without_discarding_partial_output() {
+    let token_limit = json!({
+        "response": {
+            "incomplete_details": {
+                "reason": "max_output_tokens"
+            }
+        }
+    });
+    assert!(incomplete_message(&token_limit).contains("출력 토큰 한도"));
+
+    let filtered = json!({
+        "incomplete_details": {
+            "reason": "content_filter"
+        }
+    });
+    assert!(incomplete_message(&filtered).contains("안전 정책"));
+    assert!(incomplete_message(&json!({})).contains("완료하지 못했습니다"));
+}
+
+#[test]
 fn stream_limits_are_large_enough_for_research_but_bounded() {
     const {
         assert!(MAX_SSE_FRAME_BYTES >= 256 * 1024);
@@ -132,9 +152,12 @@ fn stream_limits_are_large_enough_for_research_but_bounded() {
 }
 
 #[test]
-fn creative_mode_has_dedicated_guidance_and_room_for_long_form_work() {
+fn modes_have_dedicated_guidance_and_threefold_output_budgets() {
     assert!(instructions("create").contains("creative collaborator"));
-    assert_eq!(output_limit("create"), 8_000);
+    assert_eq!(output_limit("quick"), 9_000);
+    assert_eq!(output_limit("search"), 18_000);
+    assert_eq!(output_limit("deep"), 36_000);
+    assert_eq!(output_limit("create"), 24_000);
 }
 
 #[test]

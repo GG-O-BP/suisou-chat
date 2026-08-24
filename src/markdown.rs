@@ -4,6 +4,7 @@ pub fn render_markdown(markdown: &str) -> String {
     render(markdown)
 }
 
+#[cfg(test)]
 pub fn render_streaming_markdown(markdown: &str) -> String {
     let has_open_fence = open_fence(markdown).is_some();
     let preview = complete_streaming_tail(markdown);
@@ -92,6 +93,7 @@ fn safe_code_info(info: &str) -> String {
         .collect()
 }
 
+#[cfg(test)]
 fn complete_streaming_tail(markdown: &str) -> String {
     if markdown.is_empty() {
         return String::new();
@@ -127,6 +129,7 @@ fn complete_streaming_tail(markdown: &str) -> String {
     output
 }
 
+#[cfg(test)]
 fn open_fence(markdown: &str) -> Option<String> {
     let mut open: Option<(char, usize)> = None;
     for line in markdown.lines() {
@@ -159,6 +162,7 @@ fn open_fence(markdown: &str) -> Option<String> {
     open.map(|(marker, count)| std::iter::repeat_n(marker, count).collect())
 }
 
+#[cfg(test)]
 fn mark_last_code_block_streaming(html: &mut String) {
     if let Some(start) = html.rfind("<pre>") {
         html.replace_range(
@@ -168,6 +172,7 @@ fn mark_last_code_block_streaming(html: &mut String) {
     }
 }
 
+#[cfg(test)]
 fn unmatched_backtick_run(tail: &str) -> usize {
     let mut open = 0;
     let bytes = tail.as_bytes();
@@ -198,6 +203,7 @@ fn unmatched_backtick_run(tail: &str) -> usize {
     open
 }
 
+#[cfg(test)]
 fn unmatched_high_confidence_delimiters(tail: &str) -> (bool, bool) {
     let bytes = tail.as_bytes();
     let mut strong = false;

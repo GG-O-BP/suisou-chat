@@ -99,7 +99,6 @@ impl FuguRuntime {
         }
         let sources = completed.as_ref().map(extract_sources).unwrap_or_default();
         let usage = completed.as_ref().and_then(extract_usage);
-        emit("stage", "done");
         Ok(ResearchResponse {
             request_id: request.request_id.clone(),
             answer,

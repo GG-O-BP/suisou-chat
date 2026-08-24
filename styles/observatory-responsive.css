@@ -421,12 +421,6 @@
     height: 0.72rem;
   }
 
-  .composer-wrap.is-running .capsule-rail,
-  .composer-wrap.is-running .composer,
-  .composer-wrap.is-running .composer-hint {
-    display: none;
-  }
-
   .capsule-rail {
     display: block;
     border-top: 0;

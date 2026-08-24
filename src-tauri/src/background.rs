@@ -31,6 +31,7 @@ mod android {
                 conversation_id: String::new(),
                 workspace_revision: 0,
                 workspace_persisted: false,
+                finalizing: false,
                 assistant_message_id: String::new(),
                 question: String::new(),
                 mode: String::new(),

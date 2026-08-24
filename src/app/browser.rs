@@ -77,6 +77,19 @@ pub(super) fn reset_viewport_scroll() {
     }
 }
 
+pub(super) fn transcript_is_near_bottom(
+    scroll_top: i32,
+    client_height: i32,
+    scroll_height: i32,
+) -> bool {
+    const FOLLOW_THRESHOLD_PX: i64 = 96;
+    let distance = i64::from(scroll_height)
+        .saturating_sub(i64::from(client_height))
+        .saturating_sub(i64::from(scroll_top.max(0)))
+        .max(0);
+    distance <= FOLLOW_THRESHOLD_PX
+}
+
 pub(super) fn open_url(state: AppState, url: String) {
     spawn_local_scoped(async move {
         if let Err(error) = ipc::command_unit("open_external", &UrlArgs { url }).await {
@@ -197,5 +210,19 @@ pub(super) fn mode_depth(mode: &str) -> &'static str {
         "deep" => "ABYSS · 1,880 M",
         "create" => "ATELIER · 720 M",
         _ => "REEF · 480 M",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transcript_is_near_bottom;
+
+    #[test]
+    fn transcript_follow_threshold_handles_short_near_and_scrolled_content() {
+        assert!(transcript_is_near_bottom(0, 700, 500));
+        assert!(transcript_is_near_bottom(300, 700, 1_000));
+        assert!(transcript_is_near_bottom(210, 700, 1_000));
+        assert!(!transcript_is_near_bottom(200, 700, 1_000));
+        assert!(!transcript_is_near_bottom(-20, 700, 1_000));
     }
 }

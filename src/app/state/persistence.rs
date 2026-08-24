@@ -18,6 +18,7 @@ impl AppState {
                 workspace: self.workspace.get_clone_untracked(),
                 success_message,
                 delete_rollback_id,
+                discard_research_request_id: None,
             });
         });
         self.storage_writable.set(false);
@@ -77,6 +78,15 @@ impl AppState {
                             self.show_toast(message, "success");
                         }
                     }
+                    if let Some(request_id) = request.discard_research_request_id.clone() {
+                        spawn_local(async move {
+                            let _ = ipc::command::<_, bool>(
+                                "discard_research_job",
+                                &RequestIdArgs { request_id },
+                            )
+                            .await;
+                        });
+                    }
                     true
                 }
                 Err(error) => {
@@ -115,6 +125,20 @@ impl AppState {
                 self.persist_next_workspace();
             }
         });
+    }
+
+    pub(in crate::app) fn persist_workspace_after_research(self, request_id: String) {
+        self.persistence_queue.update(|queue| {
+            queue.push_back(PersistenceRequest {
+                workspace: self.workspace.get_clone_untracked(),
+                success_message: None,
+                delete_rollback_id: None,
+                discard_research_request_id: Some(request_id),
+            });
+        });
+        self.storage_writable.set(false);
+        self.save_state.set("saving".into());
+        self.persist_next_workspace();
     }
 
     pub(in crate::app) fn restore_deleted_conversation(self) {

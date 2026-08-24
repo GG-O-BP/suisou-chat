@@ -38,7 +38,7 @@ pub struct FuguRuntime {
 }
 
 #[cfg(test)]
-use stream::{parse_sse_frame, take_sse_frame};
+use stream::{incomplete_message, parse_sse_frame, take_sse_frame};
 
 #[cfg(test)]
 mod tests;

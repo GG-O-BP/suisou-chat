@@ -2,6 +2,8 @@ use super::super::*;
 use super::{Composer, MessageView, RetryBanner, StreamingMessage, Welcome};
 use crate::app::browser::*;
 use crate::app::state::*;
+use std::cell::Cell;
+use std::rc::Rc;
 
 #[component]
 pub(crate) fn WorkspaceView() -> View {
@@ -67,6 +69,7 @@ pub(crate) fn TopBar() -> View {
 pub(crate) fn Transcript() -> View {
     let state = use_context::<AppState>();
     let transcript_ref = create_node_ref();
+    let follow_output = Rc::new(Cell::new(true));
     let message_count = create_selector(move || {
         let active_id = state.active_id.get_clone();
         state.workspace.with(|workspace| {
@@ -76,39 +79,73 @@ pub(crate) fn Transcript() -> View {
         })
     });
 
+    let conversation_follow = Rc::clone(&follow_output);
+    create_effect(on(state.active_id, move || {
+        let active_id = state.active_id.get_clone();
+        conversation_follow.set(true);
+        let transcript_ref = transcript_ref;
+        sycamore::web::queue_microtask(move || {
+            if let Some(element) = transcript_ref
+                .try_get()
+                .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+            {
+                if active_id.is_empty() {
+                    element.set_scroll_top(0);
+                } else {
+                    element.set_scroll_top(element.scroll_height());
+                }
+            }
+        });
+    }));
+
+    let output_follow = Rc::clone(&follow_output);
     create_effect(on(
         (
             message_count,
-            state.streamed_text,
+            state.research_clock,
             state.stage,
             state.is_running,
             state.active_id,
         ),
         move || {
             message_count.track();
-            state.streamed_text.track();
+            state.research_clock.track();
             state.stage.track();
             state.is_running.track();
-            state.active_id.track();
+            if !output_follow.get() || state.active_id.with_untracked(String::is_empty) {
+                return;
+            }
             let transcript_ref = transcript_ref;
             sycamore::web::queue_microtask(move || {
-                reset_viewport_scroll();
                 if let Some(element) = transcript_ref
                     .try_get()
                     .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
                 {
-                    if state.active_id.with_untracked(String::is_empty) {
-                        element.set_scroll_top(0);
-                    } else {
-                        element.set_scroll_top(element.scroll_height());
-                    }
+                    element.set_scroll_top(element.scroll_height());
                 }
             });
         },
     ));
 
+    let scroll_follow = Rc::clone(&follow_output);
     view! {
-        section(r#ref=transcript_ref, class="transcript", aria-label="대화") {
+        section(
+            r#ref=transcript_ref,
+            class="transcript",
+            aria-label="대화",
+            on:scroll=move |_| {
+                if let Some(element) = transcript_ref
+                    .try_get()
+                    .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+                {
+                    scroll_follow.set(transcript_is_near_bottom(
+                        element.scroll_top(),
+                        element.client_height(),
+                        element.scroll_height(),
+                    ));
+                }
+            }
+        ) {
             Transition(fallback=|| view! {
                 div(class="loading-state", role="status") {
                     span(class="sonar-loader") {}

@@ -2,10 +2,14 @@ use super::{MAX_ANSWER_BYTES, MAX_SSE_FRAME_BYTES};
 use crate::models::ResearchRequest;
 use futures_util::StreamExt;
 use serde_json::Value;
+use std::time::Duration;
+use tokio::time::{sleep_until, Instant};
 use tokio_util::sync::CancellationToken;
 
 use super::response::extract_answer;
 use super::transport::{cancelled, clean_remote_error, network_error};
+
+const OUTPUT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 pub(super) async fn consume_stream<F>(
     request: &ResearchRequest,
@@ -21,11 +25,25 @@ where
     let mut streamed_answer = String::new();
     let mut completed = None;
     let mut writing_started = false;
+    let mut last_output_at = None;
 
     loop {
-        let chunk = tokio::select! {
-            _ = cancellation.cancelled() => return cancelled(),
-            chunk = stream.next() => chunk,
+        let chunk = if let Some(last_output_at) = last_output_at {
+            tokio::select! {
+                _ = cancellation.cancelled() => return cancelled(),
+                _ = sleep_until(last_output_at + OUTPUT_IDLE_TIMEOUT) => {
+                    return Err(
+                        "출력 수신이 5분 이상 멈춰 요청을 종료했습니다. 부분 답변을 보존하고 다시 시도해 주세요."
+                            .into(),
+                    );
+                }
+                chunk = stream.next() => chunk,
+            }
+        } else {
+            tokio::select! {
+                _ = cancellation.cancelled() => return cancelled(),
+                chunk = stream.next() => chunk,
+            }
         };
         let Some(chunk) = chunk else { break };
         let chunk = chunk.map_err(network_error)?;
@@ -39,7 +57,10 @@ where
                 continue;
             };
             if data == "[DONE]" {
-                continue;
+                return Err(
+                    "Sakana 스트림이 완료 이벤트 없이 종료되었습니다. 부분 답변을 보존하고 다시 시도해 주세요."
+                        .into(),
+                );
             }
             let value: Value = match serde_json::from_str(&data) {
                 Ok(value) => value,
@@ -73,15 +94,29 @@ where
                             return Err("Fugu 답변이 안전한 크기 제한을 초과했습니다.".into());
                         }
                         streamed_answer.push_str(delta);
+                        if !delta.is_empty() {
+                            last_output_at = Some(Instant::now());
+                        }
                         emit("delta", delta);
                     }
                 }
                 "response.completed" => {
-                    completed = value.get("response").cloned().or(Some(value));
+                    let completed = value.get("response").cloned().unwrap_or(value);
+                    let completed_answer = extract_answer(&completed);
+                    let answer = if completed_answer.trim().is_empty() {
+                        streamed_answer
+                    } else {
+                        completed_answer
+                    };
+                    return Ok((answer, Some(completed)));
+                }
+                "response.incomplete" => {
+                    return Err(incomplete_message(&value));
                 }
                 "response.failed" | "error" => {
                     let message = value
                         .pointer("/error/message")
+                        .or_else(|| value.pointer("/response/error/message"))
                         .or_else(|| value.get("message"))
                         .and_then(Value::as_str)
                         .unwrap_or("Sakana가 요청 처리에 실패했습니다.");
@@ -108,13 +143,36 @@ where
                 .into(),
         );
     }
-    let completed_answer = completed.as_ref().map(extract_answer).unwrap_or_default();
+    let completed = completed.expect("checked above");
+    let completed_answer = extract_answer(&completed);
     let answer = if completed_answer.trim().is_empty() {
         streamed_answer
     } else {
         completed_answer
     };
-    Ok((answer, completed))
+    Ok((answer, Some(completed)))
+}
+
+pub(super) fn incomplete_message(value: &Value) -> String {
+    let reason = value
+        .pointer("/response/incomplete_details/reason")
+        .or_else(|| value.pointer("/incomplete_details/reason"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match reason {
+        "max_output_tokens" | "max_tokens" => {
+            "출력 토큰 한도에 도달해 응답이 끝까지 완성되지 않았습니다. 부분 답변을 보존하고 다시 시도해 주세요."
+                .into()
+        }
+        "content_filter" => {
+            "응답이 안전 정책에 의해 완성되지 않았습니다. 부분 답변을 확인한 뒤 요청을 조정해 주세요."
+                .into()
+        }
+        _ => {
+            "Sakana가 응답을 완료하지 못했습니다. 부분 답변을 보존하고 다시 시도해 주세요."
+                .into()
+        }
+    }
 }
 
 pub(super) fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {

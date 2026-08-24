@@ -9,9 +9,9 @@ pub(super) fn instructions(mode: &str) -> &'static str {
 
 pub(super) fn output_limit(mode: &str) -> u64 {
     match mode {
-        "deep" => 12_000,
-        "search" => 6_000,
-        "create" => 8_000,
-        _ => 3_000,
+        "deep" => 36_000,
+        "search" => 18_000,
+        "create" => 24_000,
+        _ => 9_000,
     }
 }

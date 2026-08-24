@@ -1,13 +1,15 @@
 use crate::icons::icon;
 use crate::ipc;
-use crate::markdown::{render_markdown, render_streaming_markdown};
+use crate::markdown::render_markdown;
 use crate::models::{
-    format_relative_time, new_id, now_millis, remove_conversation, title_from_question,
+    format_relative_time, new_id, now_millis, remove_conversation,
+    stage_requires_terminal_reconciliation, terminal_job_action, title_from_question,
     BootstrapResponse, ConnectionInfo, Conversation, InputMessage, Message, ResearchEvent,
-    ResearchJob, ResearchJobUpdate, ResearchRequest, Source, StartResearchResponse, Workspace,
+    ResearchJob, ResearchJobObservation, ResearchJobUpdate, ResearchRequest, Source,
+    StartResearchResponse, Workspace,
 };
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use sycamore::futures::{spawn_local, spawn_local_scoped};
 use sycamore::prelude::*;
 use sycamore::web::events::{Event, KeyboardEvent, SubmitEvent};

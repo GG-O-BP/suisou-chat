@@ -131,6 +131,13 @@ pub struct ResearchJob {
     pub workspace_revision: u64,
     #[serde(default)]
     pub workspace_persisted: bool,
+    /// The remote response has ended, but the native layer is still committing
+    /// the terminal answer to the workspace/journal.
+    ///
+    /// Frontends may unlock immediately and render the included result, but
+    /// must not discard or independently persist this provisional snapshot.
+    #[serde(default)]
+    pub finalizing: bool,
     pub assistant_message_id: String,
     pub question: String,
     pub mode: String,
@@ -163,6 +170,8 @@ pub struct ResearchJobUpdate {
     pub request_id: String,
     pub kind: String,
     pub value: String,
+    #[serde(default)]
+    pub sequence: u64,
     pub job: Option<ResearchJob>,
 }
 

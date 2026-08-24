@@ -109,6 +109,15 @@ pub(crate) fn StreamingMessage() -> View {
             .with(|workspace| workspace.settings.last_mode.clone())
     });
     let is_creative = create_selector(move || selected_mode.get_clone() == "create");
+    // Gate the progress-vs-answer branch on a *memoized* boolean. Reading
+    // `streamed_text` directly inside the `(if …)` below would re-subscribe the
+    // conditional to the full answer signal, so every streamed token would tear
+    // down and rebuild the entire chosen branch (including the large answer text
+    // node). Captured frames showed the transcript flipping between full content
+    // and blank many times per second — the "위아래로 마구 흔들리는" flicker.
+    // A selector only notifies when the emptiness actually flips, so the subtree
+    // is built once and only the inner text node updates per token.
+    let has_stream = create_selector(move || !state.streamed_text.with(String::is_empty));
     view! {
         (if state.is_running.get() {
             view! {
@@ -118,7 +127,7 @@ pub(crate) fn StreamingMessage() -> View {
                         strong { "Sakana Fugu" }
                         span(class="research-stage") { (move || stage_label(&state.stage.get_clone(), &selected_mode.get_clone())) }
                     }
-                    (if state.streamed_text.with(String::is_empty) {
+                    (if !has_stream.get() {
                         view! {
                             div(
                                 class=move || format!("research-progress stage-{}", state.stage.get_clone()),
@@ -263,16 +272,17 @@ pub(crate) fn StreamingMessage() -> View {
                                     ))
                                 }
                             }
-                            (move || {
-                                let html = render_streaming_markdown(&state.streamed_text.get_clone());
-                                view! {
-                                    div(
-                                        class="message-body markdown-body illuminated",
-                                        on:click=move |event| open_markdown_link(state, event),
-                                        dangerously_set_inner_html=html
-                                    )
-                                }
-                            })
+                            // Render the in-flight answer as a normal text node. Replacing
+                            // parsed HTML on every token can invalidate WebKit/Sycamore DOM
+                            // wrappers while another delta is arriving, which manifested as
+                            // `RuntimeError: Out of bounds memory access`. The terminal
+                            // MessageView still renders the completed answer as Markdown.
+                            div(
+                                class="message-body markdown-body illuminated streaming-plain-text",
+                                on:click=move |event| open_markdown_link(state, event)
+                            ) {
+                                (move || state.streamed_text.get_clone())
+                            }
                             span(class="typing-cursor", aria-hidden="true") {}
                             span(class="sr-only", role="status", aria-live="polite") { "답변을 작성하고 있습니다." }
                         }

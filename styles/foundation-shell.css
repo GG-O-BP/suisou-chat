@@ -576,7 +576,8 @@ svg {
 .transcript {
   min-height: 0;
   overflow-y: auto;
-  scroll-behavior: smooth;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  scroll-behavior: auto;
   overscroll-behavior: contain;
 }
-

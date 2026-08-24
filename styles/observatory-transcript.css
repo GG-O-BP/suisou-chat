@@ -39,6 +39,10 @@
   line-height: 1.96;
 }
 
+.streaming-plain-text {
+  white-space: pre-wrap;
+}
+
 .user .message-body {
   padding: 1rem 1.15rem;
   background: var(--specimen-soft);

@@ -62,6 +62,8 @@ impl Default for ResearchJobJournal {
 struct ActiveJob {
     job: ResearchJob,
     cancellation: CancellationToken,
+    finalizing: bool,
+    progress_sequence: u64,
     background_started: bool,
     background_has_output: bool,
     checkpoint_at: u64,
@@ -93,6 +95,10 @@ impl ResearchJobManager {
             .jobs
             .into_iter()
             .map(|mut job| {
+                // A process restart means no in-memory finalization is still in
+                // flight. Preserve the terminal payload, but never leave a
+                // durable journal entry permanently marked provisional.
+                job.finalizing = false;
                 if job.status == "running" {
                     job.status = "interrupted".into();
                     job.stage = "interrupted".into();
@@ -110,6 +116,8 @@ impl ResearchJobManager {
                         background_has_output: !job.partial_answer.is_empty(),
                         job,
                         cancellation: CancellationToken::new(),
+                        finalizing: false,
+                        progress_sequence: 0,
                         background_started: false,
                     },
                 )
@@ -152,6 +160,7 @@ impl ResearchJobManager {
             conversation_id,
             workspace_revision,
             workspace_persisted: false,
+            finalizing: false,
             assistant_message_id,
             question,
             mode: request.mode.clone(),
@@ -185,6 +194,8 @@ impl ResearchJobManager {
                     background_has_output: false,
                     job: job.clone(),
                     cancellation: cancellation.clone(),
+                    finalizing: false,
+                    progress_sequence: 0,
                     background_started: false,
                 },
             );
@@ -228,8 +239,11 @@ impl ResearchJobManager {
             .jobs
             .lock()
             .map_err(|_| "연구 작업 상태를 잠글 수 없습니다.".to_string())?;
-        if jobs.values().any(|active| active.job.status == "running") {
-            return Err("이미 실행 중인 연구가 있습니다.".into());
+        if jobs
+            .values()
+            .any(|active| active.job.status == "running" || active.finalizing)
+        {
+            return Err("이전 연구 결과를 마무리하고 있습니다. 잠시 후 다시 시도해 주세요.".into());
         }
         if jobs.contains_key(&request.request_id) {
             return Err("같은 ID의 연구 작업이 이미 존재합니다.".into());
@@ -274,7 +288,7 @@ impl ResearchJobManager {
         let Some(active) = jobs.get(request_id) else {
             return Ok(false);
         };
-        if active.job.status != "running" {
+        if active.job.status != "running" || active.finalizing {
             return Ok(false);
         }
         active.cancellation.cancel();
@@ -288,11 +302,13 @@ impl ResearchJobManager {
                 .jobs
                 .lock()
                 .map_err(|_| "연구 작업 상태를 잠글 수 없습니다.".to_string())?;
-            if jobs
-                .get(request_id)
-                .is_some_and(|active| active.job.status == "running")
-            {
-                return Err("실행 중인 연구 작업은 삭제할 수 없습니다.".into());
+            if let Some(active) = jobs.get(request_id) {
+                if active.finalizing {
+                    return Err("완료 결과를 저장 중인 연구 작업은 삭제할 수 없습니다.".into());
+                }
+                if active.job.status == "running" {
+                    return Err("실행 중인 연구 작업은 삭제할 수 없습니다.".into());
+                }
             }
             jobs.remove(request_id).is_some()
         };
@@ -344,7 +360,7 @@ impl ResearchJobManager {
 
     fn handle_progress(&self, request_id: &str, kind: &str, value: &str) {
         let now = now_millis();
-        let (persist, background_update) = {
+        let (persist, background_update, sequence) = {
             let Ok(mut jobs) = self.jobs.lock() else {
                 return;
             };
@@ -406,7 +422,13 @@ impl ResearchJobManager {
                 _ => return,
             }
             active.job.updated_at = now;
-            (persist, background_update)
+            let sequence = if kind == "delta" {
+                active.progress_sequence = active.progress_sequence.saturating_add(1);
+                active.progress_sequence
+            } else {
+                0
+            };
+            (persist, background_update, sequence)
         };
         if persist {
             let _ = self.persist();
@@ -414,7 +436,7 @@ impl ResearchJobManager {
         if let Some(job) = background_update {
             self.background.update(&job);
         }
-        self.emit_progress(request_id, kind, value);
+        self.emit_progress(request_id, kind, value, sequence);
     }
 
     fn finish_with_result(
@@ -431,6 +453,8 @@ impl ResearchJobManager {
             let active = jobs
                 .get_mut(request_id)
                 .ok_or_else(|| "완료할 연구 작업을 찾지 못했습니다.".to_string())?;
+            active.finalizing = true;
+            active.job.finalizing = true;
             active.job.status = "complete".into();
             active.job.stage = "done".into();
             push_research_event(
@@ -447,7 +471,14 @@ impl ResearchJobManager {
             active.job.updated_at = now_millis();
             active.job.clone()
         };
+        // Publish the terminal payload before synchronous workspace I/O. A
+        // mobile WebView can therefore unlock and display the answer even when
+        // storage is slow; `finalizing` prevents it from racing the native
+        // commit by persisting/discarding this provisional snapshot.
+        self.emit_snapshot(&job);
         self.persist_terminal_to_workspace(&mut job);
+        job.finalizing = false;
+        job.updated_at = now_millis().max(job.updated_at);
         self.replace_job(job.clone())?;
         self.persist()?;
         if background_started {
@@ -473,6 +504,8 @@ impl ResearchJobManager {
             let active = jobs
                 .get_mut(request_id)
                 .ok_or_else(|| "완료할 연구 작업을 찾지 못했습니다.".to_string())?;
+            active.finalizing = true;
+            active.job.finalizing = true;
             active.job.status = status.to_owned();
             active.job.stage = status.to_owned();
             push_research_event(
@@ -487,7 +520,10 @@ impl ResearchJobManager {
             active.job.updated_at = now_millis();
             active.job.clone()
         };
+        self.emit_snapshot(&job);
         self.persist_terminal_to_workspace(&mut job);
+        job.finalizing = false;
+        job.updated_at = now_millis().max(job.updated_at);
         self.replace_job(job.clone())?;
         self.persist()?;
         if background_started {
@@ -505,18 +541,20 @@ impl ResearchJobManager {
                 request_id: job.request_id.clone(),
                 kind: "snapshot".into(),
                 value: String::new(),
+                sequence: 0,
                 job: Some(job.clone()),
             },
         );
     }
 
-    fn emit_progress(&self, request_id: &str, kind: &str, value: &str) {
+    fn emit_progress(&self, request_id: &str, kind: &str, value: &str, sequence: u64) {
         let _ = self.app.emit(
             RESEARCH_JOB_EVENT,
             ResearchJobUpdate {
                 request_id: request_id.to_owned(),
                 kind: kind.to_owned(),
                 value: value.to_owned(),
+                sequence,
                 job: None,
             },
         );
@@ -531,6 +569,7 @@ impl ResearchJobManager {
             .get_mut(&job.request_id)
             .ok_or_else(|| "갱신할 연구 작업을 찾지 못했습니다.".to_string())?;
         active.job = job;
+        active.finalizing = false;
         Ok(())
     }
 
@@ -783,6 +822,7 @@ mod tests {
             conversation_id: "conversation-1".into(),
             workspace_revision: 3,
             workspace_persisted: false,
+            finalizing: false,
             assistant_message_id: "message-1".into(),
             question: "질문".into(),
             mode: "search".into(),
