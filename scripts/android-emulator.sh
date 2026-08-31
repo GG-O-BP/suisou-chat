@@ -25,6 +25,8 @@ AVD_DEVICE="${SUISOU_AVD_DEVICE:-pixel_5}"
 EMULATOR="$ANDROID_HOME/emulator/emulator"
 BOOT_TIMEOUT="${SUISOU_EMULATOR_BOOT_TIMEOUT:-300}"
 EMULATOR_LOG="${SUISOU_EMULATOR_LOG:-$repo_root/logs/android-emulator.log}"
+EMULATOR_SIZE="${SUISOU_EMULATOR_SIZE:-390x844}"
+EMULATOR_DENSITY="${SUISOU_EMULATOR_DENSITY:-160}"
 
 log() { printf '[android-emulator] %s\n' "$*" >&2; }
 
@@ -66,8 +68,19 @@ wait_for_boot() {
     local booted
     booted="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
     if [[ "$booted" == "1" ]]; then
+      # The AVD's native Pixel framebuffer is 1080x2340. Rendering that many
+      # pixels through SwiftShader can block System UI for several seconds and
+      # does not add layout coverage: 1080/440dpi is still roughly a 390 CSS-px
+      # viewport. Use the required mobile test viewport directly so CI remains
+      # responsive and deterministic.
+      if [[ "$EMULATOR_SIZE" != "physical" ]]; then
+        adb shell wm size "$EMULATOR_SIZE" >/dev/null
+      fi
+      if [[ "$EMULATOR_DENSITY" != "physical" ]]; then
+        adb shell wm density "$EMULATOR_DENSITY" >/dev/null
+      fi
       adb shell input keyevent 82 >/dev/null 2>&1 || true
-      log "boot completed (API $(adb shell getprop ro.build.version.sdk | tr -d '\r'))"
+      log "boot completed (API $(adb shell getprop ro.build.version.sdk | tr -d '\r'), viewport ${EMULATOR_SIZE}@${EMULATOR_DENSITY}dpi)"
       return 0
     fi
     sleep 3

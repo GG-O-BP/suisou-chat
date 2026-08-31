@@ -36,6 +36,18 @@ describe("Android APK smoke", () => {
     expect(await $("#question-input").isExisting()).toBe(true);
   });
 
+  it("renders Korean interface text without replacement glyphs", async () => {
+    await switchToWebview();
+    await waitForAppShell();
+    const text = await browser.execute(() => document.body.innerText);
+    expect(text).toContain("새 대화");
+    expect(text).toContain("Sakana API 연결 필요");
+    expect(text).not.toContain("\uFFFD");
+    expect(await $("#question-input").getAttribute("placeholder")).toBe(
+      "무엇을 깊이 알아볼까요?",
+    );
+  });
+
   it("shows the deterministic 'API key missing' state without a key", async () => {
     await switchToWebview();
     await waitForAppShell();

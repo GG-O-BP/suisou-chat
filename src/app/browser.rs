@@ -1,6 +1,80 @@
 use super::*;
 use crate::app::state::UrlArgs;
 
+pub(super) fn mark_runtime_platform() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(user_agent) = window.navigator().user_agent() else {
+        return;
+    };
+    if !is_android_user_agent(&user_agent) {
+        return;
+    }
+    if let Some(root) = window
+        .document()
+        .and_then(|document| document.document_element())
+    {
+        let _ = root.set_attribute("data-platform", "android");
+    }
+}
+
+pub(super) fn dismiss_boot_screen() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(document) = window.document() else {
+        return;
+    };
+    let Some(boot_screen) = document.get_element_by_id("boot-screen") else {
+        return;
+    };
+    let is_android = document
+        .document_element()
+        .and_then(|root| root.get_attribute("data-platform"))
+        .is_some_and(|platform| platform == "android");
+    if !is_android {
+        boot_screen.remove();
+        return;
+    }
+    // Keep the lightweight HTML boot surface through the first composited
+    // WebView frame. Removing it from a plain timeout can happen before
+    // SwiftShader presents any frame, exposing the native window background
+    // during expensive initial rasterization.
+    let timeout_window = window.clone();
+    let frame_fallback = boot_screen.clone();
+    let frame = Closure::<dyn FnMut()>::new(move || {
+        let timeout_fallback = boot_screen.clone();
+        let remove = Closure::<dyn FnMut()>::new({
+            let boot_screen = boot_screen.clone();
+            move || boot_screen.remove()
+        });
+        if timeout_window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                remove.as_ref().unchecked_ref(),
+                800,
+            )
+            .is_ok()
+        {
+            remove.forget();
+        } else {
+            timeout_fallback.remove();
+        }
+    });
+    if window
+        .request_animation_frame(frame.as_ref().unchecked_ref())
+        .is_ok()
+    {
+        frame.forget();
+    } else {
+        frame_fallback.remove();
+    }
+}
+
+fn is_android_user_agent(user_agent: &str) -> bool {
+    user_agent.to_ascii_lowercase().contains("android")
+}
+
 pub(super) fn update_theme(theme: &str) {
     if let Some(document) = web_sys::window().and_then(|window| window.document()) {
         if let Some(root) = document.document_element() {
@@ -218,7 +292,20 @@ pub(super) fn mode_depth(mode: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::transcript_is_near_bottom;
+    use super::{is_android_user_agent, transcript_is_near_bottom};
+
+    #[test]
+    fn android_runtime_detection_does_not_affect_desktop_or_ios() {
+        assert!(is_android_user_agent(
+            "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36"
+        ));
+        assert!(!is_android_user_agent(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+        ));
+        assert!(!is_android_user_agent(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"
+        ));
+    }
 
     #[test]
     fn transcript_follow_threshold_handles_short_near_and_scrolled_content() {

@@ -1,0 +1,84 @@
+/*
+ * Android System WebView performance guardrails.
+ *
+ * KVM emulators and lower-end phones can run WebView through a software GPU.
+ * Large blurred/translucent layers then block first paint for seconds and can
+ * make the Android compositor report an ANR even though Rust/WASM is healthy.
+ * Keep Suisou's structure and color hierarchy while avoiding the most
+ * expensive raster effects on Android only.
+ */
+
+:root[data-platform="android"] {
+  text-rendering: auto;
+}
+
+:root[data-platform="android"] body {
+  background: linear-gradient(125deg, var(--gallery-deep), var(--gallery));
+}
+
+:root[data-platform="android"] .workspace {
+  background:
+    linear-gradient(rgba(18, 76, 74, 0.025) 1px, transparent 1px),
+    var(--gallery);
+  background-size: 42px 42px;
+}
+
+:root[data-platform="android"] .workspace::before {
+  display: none;
+}
+
+:root[data-platform="android"] .topbar,
+:root[data-platform="android"] .panel-header,
+:root[data-platform="android"] .composer,
+:root[data-platform="android"] .welcome-observatory .welcome-status {
+  backdrop-filter: none;
+}
+
+:root[data-platform="android"] .tank-rim::before,
+:root[data-platform="android"] .tank-rim::after,
+:root[data-platform="android"] .water-caustic,
+:root[data-platform="android"] .specimen-light {
+  animation: none;
+}
+
+:root[data-platform="android"] .observation-tank {
+  box-shadow:
+    0 14px 32px rgba(9, 55, 53, 0.12),
+    0 0 0 1px var(--line);
+}
+
+:root[data-platform="android"] .tank-glass {
+  background: linear-gradient(162deg, #84c9ba, #3b8883 48%, #082b2e);
+  box-shadow: inset 0 0 18px rgba(4, 36, 38, 0.32);
+}
+
+:root[data-platform="android"][data-theme="dark"] .tank-glass {
+  background: linear-gradient(164deg, #16494b, #0a3033 48%, #010b0d);
+}
+
+:root[data-platform="android"] .tank-glass::before {
+  display: none;
+}
+
+:root[data-platform="android"] .water-caustic {
+  display: none;
+  filter: none;
+}
+
+:root[data-platform="android"] .specimen-light {
+  box-shadow: 0 0 8px rgba(154, 242, 220, 0.72);
+}
+
+:root[data-platform="android"] .welcome-observatory .welcome-status {
+  background: rgba(5, 39, 41, 0.97);
+  box-shadow: 0 8px 20px rgba(2, 28, 30, 0.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-platform="android"] *,
+  :root[data-platform="android"] *::before,
+  :root[data-platform="android"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

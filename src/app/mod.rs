@@ -22,17 +22,21 @@ mod components;
 mod runtime;
 mod state;
 
-use browser::{install_global_shortcuts, reset_viewport_scroll};
+use browser::{
+    dismiss_boot_screen, install_global_shortcuts, mark_runtime_platform, reset_viewport_scroll,
+};
 use components::{OverlayLayer, SettingsPanel, Sidebar, SourcesPanel, WorkspaceView};
 use runtime::AppRuntime;
 use state::{AppState, Panel};
 
 #[component]
 pub fn App() -> View {
+    mark_runtime_platform();
     let state = AppState::new();
     provide_context(state);
     install_global_shortcuts(state);
     on_mount(reset_viewport_scroll);
+    on_mount(dismiss_boot_screen);
 
     view! {
         div(class=move || format!("app-shell {}", if state.panel.get() != Panel::None { "panel-open" } else { "" })) {

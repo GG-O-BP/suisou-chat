@@ -2,22 +2,39 @@ import { nativeInvoke } from "../../helpers/app.mjs";
 
 describe("live Sakana smoke", () => {
   after(async () => {
-    const bootstrap = await nativeInvoke("bootstrap");
-    await nativeInvoke("save_workspace", {
-      workspace: {
-        version: 1,
-        revision: bootstrap.workspace_revision,
-        conversations: [],
-        settings: {
-          model: "fugu",
-          reasoning: "high",
-          theme: "system",
-          last_mode: "search",
-          language: "auto",
-          sync_mode: "local",
-        },
-      },
-    });
+    // A completed background research job can commit its durable workspace
+    // between bootstrap and this test cleanup save. Reload and retry the empty
+    // snapshot on that optimistic-concurrency conflict instead of failing a
+    // successful live request in the after hook.
+    let lastError;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const bootstrap = await nativeInvoke("bootstrap");
+      try {
+        await nativeInvoke("save_workspace", {
+          workspace: {
+            version: 1,
+            revision: bootstrap.workspace_revision,
+            conversations: [],
+            settings: {
+              model: "fugu",
+              reasoning: "high",
+              theme: "system",
+              last_mode: "search",
+              language: "auto",
+              sync_mode: "local",
+            },
+          },
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!String(error).includes("다른 저장 작업이 먼저 완료되었습니다")) {
+          throw error;
+        }
+        await browser.pause(250 * (attempt + 1));
+      }
+    }
+    throw lastError;
   });
 
   it("completes one real creative request when explicitly enabled", async () => {

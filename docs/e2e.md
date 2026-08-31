@@ -88,6 +88,15 @@ npm run e2e:android:doctor
 emulator, and the NDK toolchain to `PATH`. `ANDROID_USER_HOME` is pinned so
 `avdmanager` and `emulator` agree on where AVD definitions live.
 
+At runtime the frontend marks Android System WebView with
+`data-platform="android"`. The Android-only stylesheet keeps the same
+observatory composition and color hierarchy while removing expensive blur,
+large shadow, mask, and idle-animation raster work that can stall first paint
+on SwiftShader emulators and lower-end devices. Desktop and iOS rendering are
+unchanged. The Android window theme and lightweight HTML boot surface also keep
+a stable aquarium-colored loading state visible until the first WebView frame,
+instead of exposing a blank white window during cold startup.
+
 ### Run
 
 The one-command path builds the APK, creates/boots the AVD if needed, installs
@@ -116,6 +125,8 @@ Environment overrides:
 - `SUISOU_SKIP_APK_BUILD=1` to reuse an APK
 - `SUISOU_SKIP_EMULATOR=1` to use an already-running device/emulator
 - `SUISOU_EMULATOR_BOOT_TIMEOUT` (default 300 seconds)
+- `SUISOU_EMULATOR_SIZE` (default `390x844`, use `physical` to keep AVD size)
+- `SUISOU_EMULATOR_DENSITY` (default `160`, use `physical` to keep AVD density)
 - `APPIUM_HOME` (default `e2e/.appium`)
 
 The default APK output is:
@@ -134,6 +145,7 @@ does not duplicate all of those tests. It targets Android-specific boundaries:
 - APK installation and `.MainActivity` foreground launch
 - `POST_NOTIFICATIONS` permission handling
 - System WebView discovery and CSS-selector interaction
+- Korean interface text rendering without Unicode replacement glyphs
 - frontend bootstrap through real Tauri/Rust IPC
 - composer mode/input and settings/key-field behavior
 - background/foreground transitions and orientation configuration changes
