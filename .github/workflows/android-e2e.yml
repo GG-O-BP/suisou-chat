@@ -1,0 +1,79 @@
+name: android-e2e
+
+on:
+  # Android Emulator jobs are intentionally opt-in until runtime and runner
+  # availability have been observed. The normal deterministic E2E remains in
+  # e2e.yml on every pull request.
+  workflow_dispatch:
+
+jobs:
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SUISOU_EMULATOR_BOOT_TIMEOUT: "360"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.11.0"
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file libssl-dev libgtk-3-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;29.0.13846066" \
+            "emulator" \
+            "system-images;android-36;google_apis;x86_64"
+          echo "JAVA_HOME_ANDROID=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Install Rust build tools
+        run: |
+          cargo install trunk --version 0.21.14 --locked
+          cargo install tauri-cli --version 2.11.4 --locked
+
+      - run: npm ci
+      - name: Android E2E preflight
+        run: |
+          source scripts/android-env.sh
+          npm run e2e:android:doctor
+
+      - name: Run Android APK E2E
+        run: |
+          source scripts/android-env.sh
+          npm run e2e:android
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-e2e-artifacts
+          path: |
+            e2e/artifacts
+            logs/android-emulator.log
+          if-no-files-found: ignore
