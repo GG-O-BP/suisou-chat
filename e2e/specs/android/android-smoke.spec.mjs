@@ -1,6 +1,7 @@
 import {
   MAIN_ACTIVITY,
   currentFocus,
+  ensureMainActivityForeground,
   isPermissionGranted,
   logcatContains,
   restartApp,
@@ -16,11 +17,8 @@ import {
 describe("Android APK smoke", () => {
   it("launches MainActivity as the foreground activity", async () => {
     await switchToNative();
-    await browser.waitUntil(() => currentFocus().includes(MAIN_ACTIVITY), {
-      timeout: 30_000,
-      interval: 1_000,
-      timeoutMsg: "MainActivity never became the focused window",
-    });
+    const focus = await ensureMainActivityForeground();
+    expect(focus).toContain("MainActivity");
   });
 
   it("handles the research notification permission request", async () => {
