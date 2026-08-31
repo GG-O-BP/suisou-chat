@@ -32,7 +32,13 @@ export const shared = {
     if (!result.passed) {
       fs.mkdirSync(artifacts, { recursive: true });
       const name = `${Date.now()}-${result.error?.name || "failure"}.png`;
-      await browser.saveScreenshot(path.join(artifacts, name));
+      try {
+        await browser.saveScreenshot(path.join(artifacts, name));
+      } catch (error) {
+        // Preserve the original test failure if the driver/session itself has
+        // already terminated and can no longer capture a screenshot.
+        console.warn(`could not save failure screenshot: ${error.message}`);
+      }
     }
   },
 };

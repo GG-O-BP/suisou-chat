@@ -5,6 +5,9 @@
 /node_modules/
 /e2e/artifacts/
 
+# Android E2E: locally installed Appium drivers
+/e2e/.appium/
+
 # Temporary files and logs
 *.tmp
 *.log

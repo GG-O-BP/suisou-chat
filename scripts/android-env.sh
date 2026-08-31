@@ -8,8 +8,16 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
 export NDK_HOME="${NDK_HOME:-$ANDROID_HOME/ndk/29.0.13846066}"
 
+# Keep avdmanager and the emulator in agreement on the AVD/user location.
+# Without this, XDG_CONFIG_HOME makes avdmanager write AVDs to
+# "$XDG_CONFIG_HOME/.android/avd" while the emulator only searches
+# "$HOME/.android/avd", so freshly created AVDs report "Unknown AVD name".
+export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"
+
 android_toolchain="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/bin:$android_toolchain:$PATH"
+# Command-line tools must live under cmdline-tools/latest/ so sdkmanager and
+# avdmanager resolve the SDK root as "$ANDROID_HOME" instead of its parent.
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$ANDROID_HOME/cmdline-tools/latest/bin:$android_toolchain:$PATH"
 
 # Trunk 0.21 interprets NO_COLOR as a boolean and rejects the common value "1".
 if [[ "${NO_COLOR:-}" == "1" ]]; then
