@@ -80,11 +80,21 @@ describe("Android APK smoke", () => {
   it("opens the settings control room and exposes a masked key field", async () => {
     await switchToWebview();
     await waitForAppShell();
-    await $(".welcome-status button").click();
+    // The Android soft keyboard can cover the welcome button after the composer
+    // input test. Dispatch the same DOM activation path without moving the
+    // viewport, then continue asserting through the real WebView/IPC boundary.
+    await browser.execute(() => {
+      const button = document.querySelector(".welcome-status button");
+      if (!button) throw new Error("welcome settings button is missing");
+      button.click();
+    });
+    await $(".settings-panel.visible").waitForExist({ timeout: 10_000 });
     const keyInput = await $("#sakana-api-key");
     await keyInput.waitForExist({ timeout: 10_000 });
     // The key field must be masked and must never be a plain text input.
     expect(await keyInput.getAttribute("type")).toBe("password");
+    const glmKeyInput = await $("#zai-api-key");
+    expect(await glmKeyInput.getAttribute("type")).toBe("password");
   });
 
   it("survives background and foreground lifecycle transitions", async () => {

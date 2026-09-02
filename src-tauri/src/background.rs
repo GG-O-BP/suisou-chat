@@ -7,8 +7,8 @@ use tauri::{AppHandle, Runtime};
 #[cfg(target_os = "android")]
 mod android {
     use super::*;
-    use crate::models::ResearchJob;
-    use jni::objects::{GlobalRef, JObject, JString, JValue};
+    use crate::models::{Provider, ResearchJob};
+    use jni::objects::{GlobalRef, JObject, JValue};
     use jni::JavaVM;
     use std::sync::OnceLock;
 
@@ -35,6 +35,8 @@ mod android {
                 assistant_message_id: String::new(),
                 question: String::new(),
                 mode: String::new(),
+                provider: Provider::Sakana,
+                model: String::new(),
                 status: String::new(),
                 stage: String::new(),
                 partial_answer: String::new(),
@@ -174,14 +176,12 @@ mod android {
         key: &str,
         value: &str,
     ) -> Result<(), String> {
-        let key = JString::from(
-            env.new_string(key)
-                .map_err(|_| "Android 서비스 키를 만들지 못했습니다.".to_string())?,
-        );
-        let value = JString::from(
-            env.new_string(value)
-                .map_err(|_| "Android 서비스 값을 만들지 못했습니다.".to_string())?,
-        );
+        let key = env
+            .new_string(key)
+            .map_err(|_| "Android 서비스 키를 만들지 못했습니다.".to_string())?;
+        let value = env
+            .new_string(value)
+            .map_err(|_| "Android 서비스 값을 만들지 못했습니다.".to_string())?;
         let key = JObject::from(key);
         let value = JObject::from(value);
         env.call_method(
@@ -200,10 +200,9 @@ mod android {
         key: &str,
         value: bool,
     ) -> Result<(), String> {
-        let key = JString::from(
-            env.new_string(key)
-                .map_err(|_| "Android 서비스 키를 만들지 못했습니다.".to_string())?,
-        );
+        let key = env
+            .new_string(key)
+            .map_err(|_| "Android 서비스 키를 만들지 못했습니다.".to_string())?;
         let key = JObject::from(key);
         env.call_method(
             intent,

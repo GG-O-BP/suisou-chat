@@ -54,6 +54,15 @@ if [[ "${SUISOU_SKIP_EMULATOR:-0}" != "1" ]]; then
   scripts/android-emulator.sh start
 fi
 
+app_package="com.ggobp.suisou_chat"
+log "uninstalling $app_package before the deterministic smoke run"
+# The AVD retains installed APKs across cold boots. Appium treats an equal
+# versionCode as "no upgrade needed", so an old package would otherwise survive
+# a fresh build. Removing it guarantees the newly built APK is installed.
+if adb shell pm path "$app_package" >/dev/null 2>&1; then
+  adb uninstall "$app_package" >/dev/null
+fi
+
 collect_logcat() {
   if adb get-state >/dev/null 2>&1; then
     adb logcat -d > "$artifact_dir/android-logcat.txt" 2>/dev/null || true

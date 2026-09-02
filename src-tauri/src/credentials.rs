@@ -163,6 +163,7 @@ fn api_key_account(provider: Provider) -> &'static str {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn api_key_label(provider: Provider) -> &'static str {
     match provider {
         Provider::Sakana => "Suisou Sakana API key",
