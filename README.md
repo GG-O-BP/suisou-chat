@@ -56,8 +56,10 @@ npm run e2e:doctor
 npm run e2e
 ```
 
-결정론적 브라우저 기능 테스트, 렌더링 성능 예산, 실제 Tauri/Rust IPC
-테스트를 실행합니다. 실제 provider 요청은 별도의 opt-in 명령입니다.
+결정론적 브라우저 기능 테스트, 렌더링 성능 예산, 실제 Tauri/Rust IPC 테스트,
+API 36 Android emulator APK 테스트를 실행합니다. 실제 provider 요청은 별도의
+opt-in 명령입니다. 전체 E2E에는 아래 Android 빌드 prerequisites와 KVM이
+필요합니다.
 
 ```bash
 SUISOU_E2E_LIVE=1 npm run e2e:live

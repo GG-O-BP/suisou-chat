@@ -6,14 +6,14 @@
     "node": ">=22.11.0"
   },
   "scripts": {
-    "e2e": "npm run e2e:browser && npm run e2e:performance && npm run e2e:native",
+    "e2e": "npm run e2e:browser && npm run e2e:performance && npm run e2e:native && npm run e2e:android",
     "e2e:android": "bash scripts/android-e2e.sh",
     "e2e:android:build": "bash scripts/android-build-e2e-apk.sh",
     "e2e:android:doctor": "node e2e/android-doctor.mjs",
     "e2e:browser": "npm run e2e:build:browser && wdio run e2e/wdio.browser.conf.mjs",
     "e2e:build:browser": "env -u NO_COLOR trunk build --release --dist dist-e2e --html-output index.html index.e2e.html",
     "e2e:build:native": "env -u NO_COLOR cargo tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
-    "e2e:doctor": "node e2e/doctor.mjs",
+    "e2e:doctor": "node e2e/doctor.mjs && bash -c 'source scripts/android-env.sh && node e2e/android-doctor.mjs'",
     "e2e:live": "npm run e2e:build:native && wdio run e2e/wdio.live.conf.mjs",
     "e2e:live:glm": "npm run e2e:build:native && wdio run e2e/wdio.live-glm.conf.mjs",
     "e2e:native": "npm run e2e:build:native && wdio run e2e/wdio.native.conf.mjs",

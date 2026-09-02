@@ -1,6 +1,7 @@
 # End-to-end testing
 
-Suisou uses WebdriverIO for renderer, performance, and native Tauri tests.
+Suisou uses WebdriverIO for renderer, performance, native Tauri, and Android
+APK tests.
 The normal production binary never contains an automation server.
 
 ## Test layers
@@ -11,13 +12,12 @@ The normal production binary never contains an automation server.
 | Browser performance | `npm run e2e:performance` | Large workspace startup/search budgets, long streamed answer budget, blank-frame regression, long tasks, layout shift |
 | Native Tauri | `npm run e2e:native` | Embedded WebDriver, real WebKit/WebView2/WKWebView, Rust IPC, atomic workspace persistence, HTTPS URL rejection, Markdown export, secret exposure checks |
 | Android APK | `npm run e2e:android` | API 36 Emulator, real x86_64 APK, MainActivity, System WebView, Rust IPC bootstrap, notification permission, settings/composer interaction, process restart, logcat secret checks |
-| Live Sakana smoke | `npm run e2e:live` | One real request using an API key already stored in the platform credential store |
+| Live smoke | `npm run e2e:live` | Provider-specific real requests using an API key already stored in the platform credential store |
 
-`npm run e2e` runs every deterministic layer. The live test is deliberately
-opt-in because it uses a real account, network, quota, and nondeterministic
-remote output. The Android layer is also opt-in because it downloads an Android
-system image/Appium driver and boots a KVM-backed emulator. It remains
-deterministic and never needs an API key.
+`npm run e2e` runs every deterministic layer, including Android. The Android
+SDK, JDK, emulator image, and KVM-capable Linux host are therefore required
+E2E prerequisites. The live test alone is deliberately opt-in because it uses a
+real account, network, quota, and nondeterministic remote output.
 
 ## Security boundary
 
@@ -41,20 +41,24 @@ npm ci
 npm run e2e:doctor
 ```
 
-The doctor checks Cargo, the Tauri CLI, Trunk, Node, npm, and
-Chrome/Chromium. Install the pinned Rust tools used in CI when they are
-missing:
+The doctor checks Cargo, the Tauri CLI, Trunk, Node, npm, Chrome/Chromium, and
+the Android emulator toolchain. Install the pinned Rust tools used in CI when
+they are missing:
 
 ```bash
 cargo install trunk --version 0.21.14 --locked
 cargo install tauri-cli --version 2.11.4 --locked
 ```
 
-Linux native tests require an X11 display. In headless CI:
+Linux native tests require an X11 display, and the full suite requires a
+KVM-capable Android emulator host. In headless CI:
 
 ```bash
 xvfb-run -a -s "-screen 0 1440x900x24" npm run e2e:native
 ```
+
+Because `npm run e2e` launches both desktop native and Android tests, CI runs
+those layers as separate required jobs while retaining the same test commands.
 
 Chrome/Chromium is used for deterministic browser and performance tests. The
 native suite uses the embedded `tauri-plugin-wdio-webdriver` server and does
@@ -62,7 +66,7 @@ not require an external `tauri-driver`.
 
 ## Android APK E2E
 
-The Android suite is a separate black-box layer. It drives the normal x86_64
+The Android suite is a required black-box layer. It drives the normal x86_64
 debug APK through Appium/UiAutomator2 instead of enabling the desktop-only
 embedded WebDriver feature. This preserves the generated package namespace
 `com.ggobp.suisou_chat`, crosses the actual APK/System WebView/Rust IPC
@@ -159,11 +163,10 @@ release/device checks; they should not run in untrusted CI.
 
 ### CI
 
-`.github/workflows/android-e2e.yml` is intentionally opt-in via
-`workflow_dispatch`. It enables KVM access, installs the API 36 image, builds
-the x86_64 APK, runs the Android suite, and uploads screenshots, Appium output,
-emulator logs, and logcat even when the test fails. Promote it to required PR
-CI only after observing runtime and runner availability.
+`.github/workflows/android-e2e.yml` runs on every pull request and `main` push,
+and can also be dispatched manually. It enables KVM access, installs the API 36
+image, builds the x86_64 APK, runs the Android suite, and uploads screenshots,
+Appium output, emulator logs, and logcat even when the test fails.
 
 Before release, repeat the lifecycle/Keystore/notification checks on at least
 one arm64 physical device. An emulator cannot represent vendor background

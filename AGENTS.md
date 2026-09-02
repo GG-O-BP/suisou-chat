@@ -19,7 +19,7 @@ env -u NO_COLOR cargo tauri build --no-bundle
 npm run e2e
 ```
 
-As of 2026-08-24: strict Clippy passes, 46 workspace tests pass, the deterministic E2E suite runs 21 browser/performance/native tests, the opt-in live Sakana smoke passes, the Linux native executable builds, and an arm64 Android debug APK has built successfully. Trunk 0.21.14 is exposed at `~/.local/bin/trunk` in this environment. This shell exports `NO_COLOR=1`, which breaks Trunk 0.21.14's `--no-color` parsing; run Trunk/Tauri builds with `env -u NO_COLOR` (the project `.codex/config.toml` already strips `NO_COLOR` for Codex-run subprocesses).
+As of 2026-09-02: strict Clippy passes, 53 workspace tests pass, `npm run e2e` must include deterministic browser, performance, native Tauri, and API 36 Android emulator tests, the opt-in GLM Coding Plan live smoke passes, and both x86_64 and arm64 Android debug APKs build successfully. Trunk 0.21.14 is exposed at `~/.local/bin/trunk` in this environment. This shell exports `NO_COLOR=1`, which breaks Trunk 0.21.14's `--no-color` parsing; run Trunk/Tauri builds with `env -u NO_COLOR` (the project `.codex/config.toml` already strips `NO_COLOR` for Codex-run subprocesses).
 
 ## Constraints and release checks
 

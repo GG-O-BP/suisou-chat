@@ -7,7 +7,7 @@
 #   4. run the WebdriverIO Android suite
 #   5. always collect logcat into e2e/artifacts
 #
-# This layer is opt-in and is NOT part of `npm run e2e`. It never uses a real
+# This layer is part of the required `npm run e2e` suite. It never uses a real
 # API key: the app is exercised in its deterministic "no API key" state.
 
 set -euo pipefail
