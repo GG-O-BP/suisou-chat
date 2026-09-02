@@ -1,7 +1,7 @@
 use crate::fugu::FuguRuntime;
 use crate::models::{
-    Message, ResearchEvent, ResearchJob, ResearchJobUpdate, ResearchRequest, ResearchResponse,
-    StartResearchResponse,
+    provider_for_model, Message, Provider, ResearchEvent, ResearchJob, ResearchJobUpdate,
+    ResearchRequest, ResearchResponse, StartResearchResponse,
 };
 use crate::storage;
 use serde::{Deserialize, Serialize};
@@ -164,6 +164,8 @@ impl ResearchJobManager {
             assistant_message_id,
             question,
             mode: request.mode.clone(),
+            provider: provider_for_model(&request.model)?,
+            model: request.model.clone(),
             status: "running".into(),
             stage: "connecting".into(),
             partial_answer: String::new(),
@@ -264,11 +266,16 @@ impl ResearchJobManager {
         Ok(values)
     }
 
-    pub fn has_running(&self) -> Result<bool, String> {
+    pub fn has_running(&self, provider: Provider) -> Result<bool, String> {
         self.jobs
             .lock()
             .map_err(|_| "연구 작업 상태를 잠글 수 없습니다.".to_string())
-            .map(|jobs| jobs.values().any(|active| active.job.status == "running"))
+            .map(|jobs| {
+                jobs.values().any(|active| {
+                    active.job.provider == provider
+                        && (active.job.status == "running" || active.finalizing)
+                })
+            })
     }
 
     pub fn get(&self, request_id: &str) -> Result<Option<ResearchJob>, String> {
@@ -765,6 +772,10 @@ fn read_journal(path: &Path) -> Result<ResearchJobJournal, String> {
         validate_request_id(&job.request_id)?;
         validate_context_id(&job.conversation_id, "대화")?;
         validate_context_id(&job.assistant_message_id, "답변")?;
+        let provider = provider_for_model(&job.model)?;
+        if job.provider != provider {
+            return Err("연구 작업의 모델과 공급자가 일치하지 않습니다.".into());
+        }
         if job.partial_answer.len() > MAX_PARTIAL_ANSWER_BYTES {
             return Err("연구 작업의 부분 답변이 안전한 크기 제한을 초과했습니다.".into());
         }
@@ -826,6 +837,8 @@ mod tests {
             assistant_message_id: "message-1".into(),
             question: "질문".into(),
             mode: "search".into(),
+            provider: Provider::Sakana,
+            model: "fugu".into(),
             status: status.into(),
             stage: status.into(),
             partial_answer: "부분 답변".into(),

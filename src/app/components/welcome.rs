@@ -4,6 +4,19 @@ use crate::app::state::*;
 #[component]
 pub(crate) fn Welcome() -> View {
     let state = use_context::<AppState>();
+    let selected_provider = create_memo(move || {
+        state
+            .workspace
+            .with(|workspace| provider_for_model(&workspace.settings.model).to_owned())
+    });
+    let key_configured = create_selector(move || {
+        let provider = selected_provider.get_clone();
+        if provider == "zai" {
+            state.zai_key_configured.get()
+        } else {
+            state.sakana_key_configured.get()
+        }
+    });
     view! {
         section(class="welcome") {
             h1(class="sr-only") { "Suisou AI 리서치" }
@@ -36,12 +49,19 @@ pub(crate) fn Welcome() -> View {
                     }
                 }
                 div(class="welcome-status") {
-                    span(class=move || format!("status-beacon {}", if state.key_configured.get() { "ready" } else { "attention" })) {}
+                    span(class=move || format!("status-beacon {}", if key_configured.get() { "ready" } else { "attention" })) {}
                     div {
                         small { "CONNECTION STATUS" }
-                        strong { (move || if state.key_configured.get() { "Sakana Fugu 준비 완료" } else { "Sakana API 연결 필요" }) }
+                        strong { (move || {
+                            let provider = selected_provider.get_clone();
+                            if key_configured.get() {
+                                format!("{} 준비 완료", provider_label(&provider))
+                            } else {
+                                format!("{} API 연결 필요", provider_label(&provider))
+                            }
+                        }) }
                     }
-                    (if !state.key_configured.get() {
+                    (if !key_configured.get() {
                         view! {
                             button(on:click=move |_| state.panel.set(Panel::Settings)) {
                                 "설정 열기"
@@ -104,7 +124,10 @@ pub(crate) fn Welcome() -> View {
                     )
                 }
             }
-            p(class="privacy-note") { (icon("key")) " 질문은 Sakana로 전송됩니다. 개인정보·기밀은 입력하지 마세요." }
+            p(class="privacy-note") { (icon("key")) " " (move || format!(
+                "질문은 {}로 전송됩니다. 개인정보·기밀은 입력하지 마세요.",
+                provider_label(&selected_provider.get_clone())
+            )) }
         }
     }
 }

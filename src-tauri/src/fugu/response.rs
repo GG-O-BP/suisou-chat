@@ -10,6 +10,12 @@ pub(super) fn extract_answer(value: &Value) -> String {
     if let Some(text) = value.get("output_text").and_then(Value::as_str) {
         return text.to_owned();
     }
+    if let Some(text) = value
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+    {
+        return text.to_owned();
+    }
     let mut parts = Vec::new();
     collect_output_text(value, &mut parts);
     parts.join("\n")
@@ -46,7 +52,11 @@ pub(super) fn extract_sources(value: &Value) -> Vec<Source> {
         .into_iter()
         .filter_map(|candidate| {
             let mut url = Url::parse(candidate.url.as_str()).ok()?;
-            if url.scheme() != "https" || url.host_str().is_none() {
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
                 return None;
             }
             url.set_fragment(None);
@@ -97,9 +107,14 @@ fn collect_sources(value: &Value, output: &mut Vec<SourceCandidate>) {
             let likely_source = kind.contains("citation")
                 || kind.contains("source")
                 || kind.contains("search_result")
-                || object.contains_key("snippet");
+                || object.contains_key("snippet")
+                || (object.contains_key("link") && object.contains_key("title"));
             if likely_source {
-                if let Some(url) = object.get("url").and_then(Value::as_str) {
+                if let Some(url) = object
+                    .get("url")
+                    .or_else(|| object.get("link"))
+                    .and_then(Value::as_str)
+                {
                     output.push(SourceCandidate {
                         title: object
                             .get("title")
@@ -109,6 +124,7 @@ fn collect_sources(value: &Value, output: &mut Vec<SourceCandidate>) {
                         url: url.to_owned(),
                         snippet: object
                             .get("snippet")
+                            .or_else(|| object.get("content"))
                             .or_else(|| object.get("description"))
                             .and_then(Value::as_str)
                             .unwrap_or_default()
@@ -128,10 +144,12 @@ pub(super) fn extract_usage(value: &Value) -> Option<Usage> {
     let usage = value.get("usage")?;
     let input_tokens = usage
         .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let output_tokens = usage
         .get("output_tokens")
+        .or_else(|| usage.get("completion_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let total_tokens = usage
@@ -144,6 +162,11 @@ pub(super) fn extract_usage(value: &Value) -> Option<Usage> {
         .or_else(|| {
             usage
                 .pointer("/output_tokens_details/reasoning_tokens")
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            usage
+                .pointer("/completion_tokens_details/reasoning_tokens")
                 .and_then(Value::as_u64)
         })
         .unwrap_or(0);

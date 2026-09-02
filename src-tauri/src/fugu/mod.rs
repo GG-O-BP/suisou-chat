@@ -4,11 +4,16 @@ mod runtime_credentials;
 mod runtime_research;
 mod stream;
 mod transport;
+mod zai;
 
 use crate::credentials::{ApiKeyStore, SystemApiKeyStore, UnavailableApiKeyStore};
-use crate::models::{validate_research_request, ConnectionInfo, ResearchRequest, ResearchResponse};
+use crate::models::{
+    provider_for_model, validate_research_request, ConnectionInfo, Provider, ResearchRequest,
+    ResearchResponse,
+};
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -22,6 +27,7 @@ use transport::{
 };
 
 const API_ROOT: &str = "https://api.sakana.ai/v1";
+pub(super) const ZAI_API_ROOT: &str = "https://api.z.ai/api/paas/v4";
 const KEY_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;
@@ -31,10 +37,14 @@ const CREDENTIAL_TASK_FAILED: &str =
 
 pub struct FuguRuntime {
     client: Client,
-    api_key: Mutex<Option<Zeroizing<String>>>,
-    api_key_store: Arc<dyn ApiKeyStore>,
+    credentials: HashMap<Provider, ProviderCredential>,
     key_update: Mutex<()>,
-    credential_notice: Mutex<Option<String>>,
+}
+
+struct ProviderCredential {
+    api_key: Mutex<Option<Zeroizing<String>>>,
+    store: Arc<dyn ApiKeyStore>,
+    notice: Mutex<Option<String>>,
 }
 
 #[cfg(test)]

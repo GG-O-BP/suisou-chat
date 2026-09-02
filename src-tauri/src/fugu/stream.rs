@@ -1,4 +1,5 @@
 use super::{MAX_ANSWER_BYTES, MAX_SSE_FRAME_BYTES};
+use crate::models::Provider;
 use crate::models::ResearchRequest;
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -46,7 +47,7 @@ where
             }
         };
         let Some(chunk) = chunk else { break };
-        let chunk = chunk.map_err(network_error)?;
+        let chunk = chunk.map_err(|error| network_error(error, Provider::Sakana))?;
         buffer.extend_from_slice(&chunk);
         if buffer.len() > MAX_SSE_FRAME_BYTES {
             return Err("Sakana 스트림 프레임이 안전한 크기 제한을 초과했습니다.".into());
@@ -175,7 +176,7 @@ pub(super) fn incomplete_message(value: &Value) -> String {
     }
 }
 
-pub(super) fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+pub(in crate::fugu) fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     let mut found = None;
     for index in 0..buffer.len().saturating_sub(1) {
         if buffer[index] == b'\n' && buffer[index + 1] == b'\n' {
@@ -193,7 +194,7 @@ pub(super) fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
     Some(frame)
 }
 
-pub(super) fn parse_sse_frame(frame: &[u8]) -> Option<(String, String)> {
+pub(in crate::fugu) fn parse_sse_frame(frame: &[u8]) -> Option<(String, String)> {
     let text = std::str::from_utf8(frame).ok()?;
     let mut event = String::new();
     let mut data = Vec::new();

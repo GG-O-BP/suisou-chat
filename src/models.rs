@@ -12,6 +12,8 @@ pub struct Workspace {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
+    #[serde(default = "default_provider")]
+    pub provider: String,
     pub model: String,
     pub reasoning: String,
     pub theme: String,
@@ -23,6 +25,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            provider: "sakana".into(),
             model: "fugu".into(),
             reasoning: "high".into(),
             theme: "system".into(),
@@ -31,6 +34,10 @@ impl Default for Settings {
             sync_mode: "local".into(),
         }
     }
+}
+
+fn default_provider() -> String {
+    "sakana".into()
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -80,11 +87,17 @@ pub struct Usage {
 pub struct BootstrapResponse {
     pub workspace: Workspace,
     pub workspace_revision: u64,
-    pub key_configured: bool,
+    pub credentials: Vec<CredentialStatus>,
     pub credential_notice: Option<String>,
     pub recovery_notice: Option<String>,
     pub storage_label: String,
     pub storage_writable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CredentialStatus {
+    pub provider: String,
+    pub key_configured: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -123,6 +136,10 @@ pub struct ResearchJob {
     pub assistant_message_id: String,
     pub question: String,
     pub mode: String,
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    #[serde(default = "default_model")]
+    pub model: String,
     pub status: String,
     pub stage: String,
     pub partial_answer: String,
@@ -292,8 +309,28 @@ pub struct ResearchJobUpdate {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ConnectionInfo {
+    pub provider: String,
     pub message: String,
     pub models: Vec<String>,
+}
+
+fn default_model() -> String {
+    "fugu".into()
+}
+
+pub fn provider_for_model(model: &str) -> &'static str {
+    if model == "glm-5.3" {
+        "zai"
+    } else {
+        "sakana"
+    }
+}
+
+pub fn provider_label(provider: &str) -> &'static str {
+    match provider {
+        "zai" => "Z.ai GLM",
+        _ => "Sakana",
+    }
 }
 
 pub fn new_id(prefix: &str) -> String {

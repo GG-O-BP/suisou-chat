@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::models::{BootstrapResponse, Workspace};
+use crate::models::{BootstrapResponse, CredentialStatus, Provider, Workspace};
 use crate::storage;
 use tauri::State;
 
@@ -8,10 +8,17 @@ pub(crate) fn bootstrap(state: State<'_, AppState>) -> BootstrapResponse {
     let loaded = storage::load_workspace(&state.workspace_path);
     let storage_writable = loaded.warning.is_none() || loaded.recovered_from_backup;
     let recovery_notice = loaded.warning.clone();
+    let credentials = Provider::ALL
+        .into_iter()
+        .map(|provider| CredentialStatus {
+            provider,
+            key_configured: state.fugu.has_key(provider),
+        })
+        .collect();
     BootstrapResponse {
         workspace_revision: loaded.workspace.revision,
         workspace: loaded.workspace,
-        key_configured: state.fugu.has_key(),
+        credentials,
         credential_notice: state.fugu.credential_notice(),
         recovery_notice,
         storage_label: if storage_writable {

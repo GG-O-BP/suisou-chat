@@ -11,14 +11,14 @@ describe("bootstrap, settings, and environment states", () => {
 
     await $(".welcome-status button").click();
     await expect($(".settings-panel")).toHaveElementClass("visible");
-    await expect($("#api-key")).toBeDisplayed();
+    await expect($("#sakana-api-key")).toBeDisplayed();
   });
 
   it("connects and disconnects an API key through the renderer flow", async () => {
     await openFixture("empty");
     await $(".settings-button").click();
 
-    await $("#api-key").setValue("e2e-test-credential-1234567890");
+    await $("#sakana-api-key").setValue("e2e-test-credential-1234567890");
     await $(".key-form button[type=submit]").click();
 
     await expect($(".key-connected")).toHaveText(
@@ -29,7 +29,23 @@ describe("bootstrap, settings, and environment states", () => {
     );
 
     await $(".key-connected button").click();
-    await expect($("#api-key")).toBeDisplayed();
+    await expect($("#sakana-api-key")).toBeDisplayed();
+  });
+
+  it("connects the Z.ai GLM key separately and keeps Sakana disconnected", async () => {
+    await openFixture("empty");
+    await $(".settings-button").click();
+
+    await $("#zai-api-key").setValue("e2e-standard-zai-key-1234567890");
+    await $("#zai-api-key ~ button[type=submit]").click();
+
+    await expect($(".key-connected")).toHaveText(
+      expect.stringContaining("Z.ai GLM 준비 완료"),
+    );
+    await expect($("#sakana-api-key")).toBeDisplayed();
+    await expect($(".welcome-status")).toHaveText(
+      expect.stringContaining("Sakana API 연결 필요"),
+    );
   });
 
   it("switches light and dark themes and persists the setting", async () => {

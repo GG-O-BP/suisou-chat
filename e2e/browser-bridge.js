@@ -84,6 +84,7 @@
   const fixture = query.get("fixture") || "empty";
 
   const settings = {
+    provider: "sakana",
     model: "fugu",
     reasoning: "high",
     theme: "system",
@@ -169,7 +170,10 @@
     calls: {},
     jobs: new Map(),
     timers: new Map(),
-    keyConfigured: fixture === "ready",
+    credentials: {
+      sakana: fixture === "ready",
+      zai: false,
+    },
     workspace: {
       version: 1,
       revision: 0,
@@ -317,7 +321,10 @@
     const response = {
       workspace: clone(state.workspace),
       workspace_revision: state.workspace.revision,
-      key_configured: state.keyConfigured,
+      credentials: [
+        { provider: "sakana", key_configured: state.credentials.sakana },
+        { provider: "zai", key_configured: state.credentials.zai },
+      ],
       credential_notice: null,
       recovery_notice:
         state.fixture === "readonly"
@@ -343,21 +350,29 @@
     return state.workspace.revision;
   };
 
-  mocks.connect_api_key = ({ apiKey }) => {
-    record("connect_api_key", { apiKey: apiKey ? "[redacted]" : "" });
+  mocks.connect_api_key = ({ apiKey, providerName }) => {
+    record("connect_api_key", {
+      apiKey: apiKey ? "[redacted]" : "",
+      providerName,
+    });
     if (!apiKey || apiKey.length < 10) {
       throw "API 키 형식이 올바르지 않습니다.";
     }
-    state.keyConfigured = true;
+    const provider = providerName === "zai" ? "zai" : "sakana";
+    state.credentials[provider] = true;
     return {
-      message: "Sakana API에 안전하게 연결되었습니다.",
-      models: ["fugu", "fugu-ultra"],
+      provider,
+      message:
+        provider === "zai"
+          ? "Z.ai GLM API 키 형식을 확인했습니다. 첫 요청에서 계정 권한을 확인합니다."
+          : "Sakana API에 안전하게 연결되었습니다.",
+      models: provider === "zai" ? ["glm-5.3"] : ["fugu", "fugu-ultra"],
     };
   };
 
-  mocks.clear_api_key = () => {
-    record("clear_api_key", {});
-    state.keyConfigured = false;
+  mocks.clear_api_key = ({ providerName }) => {
+    record("clear_api_key", { providerName });
+    state.credentials[providerName === "zai" ? "zai" : "sakana"] = false;
   };
   mocks.forget_api_key = mocks.clear_api_key;
 
@@ -373,6 +388,8 @@
       assistant_message_id: args.assistantMessageId,
       question: args.question,
       mode: args.request.mode,
+      provider: args.request.model === "glm-5.3" ? "zai" : "sakana",
+      model: args.request.model,
       status: "running",
       stage: "connecting",
       partial_answer: "",

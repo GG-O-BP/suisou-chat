@@ -114,9 +114,18 @@ impl AppState {
             );
             return;
         }
-        if !self.key_configured.get_untracked() {
+        let selected_provider = self
+            .workspace
+            .with_untracked(|workspace| provider_for_model(&workspace.settings.model).to_owned());
+        if !self.key_configured_for(&selected_provider) {
             self.panel.set(Panel::Settings);
-            self.show_toast("먼저 설정에서 Sakana API 키를 연결해 주세요.", "warning");
+            self.show_toast(
+                format!(
+                    "먼저 설정에서 {} API 키를 연결해 주세요.",
+                    provider_label(&selected_provider)
+                ),
+                "warning",
+            );
             return;
         }
         let failed_id = self.active_id.get_clone_untracked();

@@ -1,3 +1,4 @@
+use crate::models::Provider;
 use keyring_core::{Entry, Error};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::collections::HashMap;
@@ -5,7 +6,8 @@ use std::sync::Mutex;
 use zeroize::Zeroizing;
 
 const SERVICE_NAME: &str = "com.ggobp.suisou-chat";
-const API_KEY_ACCOUNT: &str = "sakana-api-key";
+const SAKANA_API_KEY_ACCOUNT: &str = "sakana-api-key";
+const ZAI_API_KEY_ACCOUNT: &str = "zai-glm-api-key";
 const STORE_UNAVAILABLE: &str =
     "운영체제 보안 저장소를 사용할 수 없습니다. 보안 저장소를 잠금 해제한 뒤 앱을 다시 시작해 주세요.";
 const STORE_LOCK_FAILED: &str = "API 키 보안 저장소를 잠글 수 없습니다.";
@@ -33,9 +35,10 @@ pub struct SystemApiKeyStore {
 }
 
 impl SystemApiKeyStore {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(provider: Provider) -> Result<Self, String> {
         let store = native_store().map_err(|_| STORE_UNAVAILABLE.to_string())?;
-        let entry = native_entry(store.as_ref()).map_err(|_| STORE_UNAVAILABLE.to_string())?;
+        let entry =
+            native_entry(store.as_ref(), provider).map_err(|_| STORE_UNAVAILABLE.to_string())?;
         Ok(Self {
             entry: Mutex::new(entry),
         })
@@ -108,13 +111,16 @@ fn native_store() -> keyring_core::Result<std::sync::Arc<keyring_core::Credentia
 }
 
 #[cfg(target_os = "linux")]
-fn native_entry(store: &keyring_core::CredentialStore) -> keyring_core::Result<Entry> {
+fn native_entry(
+    store: &keyring_core::CredentialStore,
+    provider: Provider,
+) -> keyring_core::Result<Entry> {
     if is_wsl() {
         let modifiers =
-            HashMap::from([("target", SERVICE_NAME), ("label", "Suisou Sakana API key")]);
-        store.build(SERVICE_NAME, API_KEY_ACCOUNT, Some(&modifiers))
+            HashMap::from([("target", SERVICE_NAME), ("label", api_key_label(provider))]);
+        store.build(SERVICE_NAME, api_key_account(provider), Some(&modifiers))
     } else {
-        store.build(SERVICE_NAME, API_KEY_ACCOUNT, None)
+        store.build(SERVICE_NAME, api_key_account(provider), None)
     }
 }
 
@@ -134,14 +140,34 @@ fn native_store() -> keyring_core::Result<std::sync::Arc<keyring_core::Credentia
 }
 
 #[cfg(target_os = "windows")]
-fn native_entry(store: &keyring_core::CredentialStore) -> keyring_core::Result<Entry> {
+fn native_entry(
+    store: &keyring_core::CredentialStore,
+    provider: Provider,
+) -> keyring_core::Result<Entry> {
     let modifiers = HashMap::from([("persistence", "Local")]);
-    store.build(SERVICE_NAME, API_KEY_ACCOUNT, Some(&modifiers))
+    store.build(SERVICE_NAME, api_key_account(provider), Some(&modifiers))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn native_entry(store: &keyring_core::CredentialStore) -> keyring_core::Result<Entry> {
-    store.build(SERVICE_NAME, API_KEY_ACCOUNT, None)
+fn native_entry(
+    store: &keyring_core::CredentialStore,
+    provider: Provider,
+) -> keyring_core::Result<Entry> {
+    store.build(SERVICE_NAME, api_key_account(provider), None)
+}
+
+fn api_key_account(provider: Provider) -> &'static str {
+    match provider {
+        Provider::Sakana => SAKANA_API_KEY_ACCOUNT,
+        Provider::Zai => ZAI_API_KEY_ACCOUNT,
+    }
+}
+
+fn api_key_label(provider: Provider) -> &'static str {
+    match provider {
+        Provider::Sakana => "Suisou Sakana API key",
+        Provider::Zai => "Suisou Z.ai GLM API key",
+    }
 }
 
 #[cfg(target_os = "macos")]

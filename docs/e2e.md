@@ -195,3 +195,18 @@ SUISOU_E2E_LIVE=1 npm run e2e:live
 ```
 
 Do not run the live test in untrusted CI environments.
+
+### Provider-specific live smoke
+
+Sakana and Z.ai live checks remain opt-in and never accept an API key through a
+file or command argument. To exercise only the standard Z.ai GLM Chat
+Completions path after storing a standard Model API key in the native credential
+store:
+
+```bash
+SUISOU_E2E_LIVE=1 npm run e2e:live:glm
+```
+
+The full `npm run e2e:live` suite still includes the legacy Sakana smoke. When
+Sakana quota is unavailable, run the GLM-specific command above instead of the
+full live suite.

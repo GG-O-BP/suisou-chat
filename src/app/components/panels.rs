@@ -17,7 +17,7 @@ pub(crate) fn SourcesPanel() -> View {
                     div(class="sources-empty") {
                         span(class="source-rings") { (icon("sources")) }
                         h3 { "아직 출처가 없습니다" }
-                        p { "웹 검색이나 심층 조사로 질문하면 Sakana Fugu가 참고한 자료를 여기에 모아 보여 줍니다. 빠른 답변과 창작 모드는 웹을 검색하지 않습니다." }
+                        p { "웹 검색이나 심층 조사로 질문하면 선택한 AI가 참고한 자료를 여기에 모아 보여 줍니다. 빠른 답변과 창작 모드는 웹을 검색하지 않습니다." }
                     }
                 }
             } else {
@@ -83,22 +83,22 @@ pub(crate) fn SettingsPanel() -> View {
             }
             div(class="settings-content") {
                 section(class="setting-section") {
-                    div(class="setting-title") { span(class="setting-number") { "01" } div { h3 { "Sakana API" } p { "키는 운영체제 보안 저장소에 보관되며 앱 시작 시 자동 복원됩니다." } } }
-                    (if state.key_configured.get() {
+                    div(class="setting-title") { span(class="setting-number") { "01" } div { h3 { "Sakana API" } p { "Fugu 검증에 사용합니다. 키는 운영체제 보안 저장소에 보관되며 앱 시작 시 자동 복원됩니다." } } }
+                    (if state.sakana_key_configured.get() {
                         view! {
                             div(class="key-connected") {
                                 span { (icon("check")) }
                                 div {
                                     strong { "Sakana Fugu 준비 완료" }
-                                    small { (if state.connection_message.with(String::is_empty) {
+                                    small { (if state.sakana_connection_message.with(String::is_empty) {
                                         "이 기기의 보안 저장소에 저장됨".into()
                                     } else {
-                                        state.connection_message.get_clone()
+                                        state.sakana_connection_message.get_clone()
                                     }) }
                                 }
                                 button(
-                                    disabled=move || state.is_running.get(),
-                                    on:click=move |_| state.clear_key()
+                                    disabled=move || state.is_running.get() && state.running_provider.get_clone() == "sakana",
+                                    on:click=move |_| state.clear_key("sakana")
                                 ) { "연결 해제" }
                             }
                         }
@@ -106,13 +106,13 @@ pub(crate) fn SettingsPanel() -> View {
                         view! {
                             form(class="key-form", on:submit=move |event: SubmitEvent| {
                                 event.prevent_default();
-                                state.connect_key();
+                                state.connect_key("sakana");
                             }) {
-                                label(r#for="api-key") { "Sakana API key" }
+                                label(r#for="sakana-api-key") { "Sakana API key" }
                                 div(class="key-input-row") {
-                                    input(id="api-key", r#type="password", bind:value=state.key_input, autocomplete="off", placeholder="키 붙여넣기", disabled=state.key_busy)
-                                    button(r#type="submit", disabled=move || state.key_busy.get() || state.key_input.with(|value| value.trim().is_empty())) {
-                                        (move || if state.key_busy.get() { "확인 중…" } else { "연결" })
+                                    input(id="sakana-api-key", r#type="password", bind:value=state.sakana_key_input, autocomplete="off", placeholder="키 붙여넣기", disabled=state.sakana_key_busy)
+                                    button(r#type="submit", disabled=move || state.sakana_key_busy.get() || state.sakana_key_input.with(|value| value.trim().is_empty())) {
+                                        (move || if state.sakana_key_busy.get() { "확인 중…" } else { "연결" })
                                     }
                                 }
                                 p { "키는 대화 기록이나 브라우저 저장소, 로그에 남기지 않고 운영체제 보안 저장소에만 보관합니다." }
@@ -122,7 +122,46 @@ pub(crate) fn SettingsPanel() -> View {
                 }
 
                 section(class="setting-section") {
-                    div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "화면" } p { "사용 환경에 맞는 화면 밝기를 선택하세요." } } }
+                    div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "Z.ai GLM API" } p { "표준 Model API 키만 사용합니다. GLM Coding Plan 전용 키와 endpoint는 지원하지 않습니다." } } }
+                    (if state.zai_key_configured.get() {
+                        view! {
+                            div(class="key-connected") {
+                                span { (icon("check")) }
+                                div {
+                                    strong { "Z.ai GLM 준비 완료" }
+                                    small { (if state.zai_connection_message.with(String::is_empty) {
+                                        "이 기기의 보안 저장소에 저장됨".into()
+                                    } else {
+                                        state.zai_connection_message.get_clone()
+                                    }) }
+                                }
+                                button(
+                                    disabled=move || state.is_running.get() && state.running_provider.get_clone() == "zai",
+                                    on:click=move |_| state.clear_key("zai")
+                                ) { "연결 해제" }
+                            }
+                        }
+                    } else {
+                        view! {
+                            form(class="key-form", on:submit=move |event: SubmitEvent| {
+                                event.prevent_default();
+                                state.connect_key("zai");
+                            }) {
+                                label(r#for="zai-api-key") { "Z.ai GLM API key" }
+                                div(class="key-input-row") {
+                                    input(id="zai-api-key", r#type="password", bind:value=state.zai_key_input, autocomplete="off", placeholder="표준 Model API 키 붙여넣기", disabled=state.zai_key_busy)
+                                    button(r#type="submit", disabled=move || state.zai_key_busy.get() || state.zai_key_input.with(|value| value.trim().is_empty())) {
+                                        (move || if state.zai_key_busy.get() { "확인 중…" } else { "연결" })
+                                    }
+                                }
+                                p { "키 형식만 로컬에서 확인하고 실제 계정 권한은 첫 GLM 요청에서 검증합니다. 키는 보안 저장소에만 보관합니다." }
+                            }
+                        }
+                    })
+                }
+
+                section(class="setting-section") {
+                    div(class="setting-title") { span(class="setting-number") { "03" } div { h3 { "화면" } p { "사용 환경에 맞는 화면 밝기를 선택하세요." } } }
                     div(class="segmented-control") {
                         ThemeButton(value="system", label="시스템")
                         ThemeButton(value="light", label="라이트")
@@ -131,13 +170,17 @@ pub(crate) fn SettingsPanel() -> View {
                 }
 
                 section(class="setting-section caution") {
-                    div(class="setting-title") { span(class="setting-number") { "03" } div { h3 { "데이터와 개인정보" } p { "대화 기록은 이 기기에만 저장합니다. 답변을 만들 때는 질문과 대화 내용을 Sakana로 전송합니다." } } }
+                    div(class="setting-title") { span(class="setting-number") { "04" } div { h3 { "데이터와 개인정보" } p { "대화 기록은 이 기기에만 저장합니다. 답변을 만들 때는 선택한 provider로 질문과 대화 내용을 전송합니다." } } }
                     ul {
                         li { "개인정보·건강·금융·회사 기밀을 입력하지 마세요." }
-                        li { "Sakana의 보존·학습 설정과 약관을 배포 전에 확인하세요." }
+                        li { "Sakana와 Z.ai 각각의 보존·학습 설정, 검색 처리, 요금과 약관을 배포 전에 확인하세요." }
                         li { "기기 간 동기화는 아직 제공하지 않습니다." }
                     }
-                    button(class="policy-link", on:click=move |_| open_url(state, "https://console.sakana.ai/privacy-policy".into())) { "Sakana 개인정보 정책" (icon("external")) }
+                    div(class="policy-links") {
+                        button(class="policy-link", on:click=move |_| open_url(state, "https://console.sakana.ai/privacy-policy".into())) { "Sakana 개인정보 정책" (icon("external")) }
+                        button(class="policy-link", on:click=move |_| open_url(state, "https://docs.z.ai/legal-agreement/privacy-policy".into())) { "Z.ai 개인정보 정책" (icon("external")) }
+                        button(class="policy-link", on:click=move |_| open_url(state, "https://docs.z.ai/legal-agreement/terms-of-use".into())) { "Z.ai 이용약관" (icon("external")) }
+                    }
                 }
 
                 (if has_active_conversation.get() {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::InputMessage;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 struct MemoryApiKeyStore {
@@ -153,11 +154,101 @@ fn stream_limits_are_large_enough_for_research_but_bounded() {
 
 #[test]
 fn modes_have_dedicated_guidance_and_threefold_output_budgets() {
-    assert!(instructions("create").contains("creative collaborator"));
+    assert!(instructions("create", Provider::Sakana).contains("creative collaborator"));
+    assert!(instructions("create", Provider::Zai).contains("Z.ai GLM"));
     assert_eq!(output_limit("quick"), 9_000);
     assert_eq!(output_limit("search"), 18_000);
     assert_eq!(output_limit("deep"), 36_000);
     assert_eq!(output_limit("create"), 24_000);
+}
+
+#[test]
+fn builds_a_glm_chat_completions_request_with_the_official_model_id() {
+    let request = ResearchRequest {
+        request_id: "request-glm".into(),
+        model: "glm-5.3".into(),
+        mode: "search".into(),
+        reasoning: "xhigh".into(),
+        messages: vec![InputMessage {
+            role: "user".into(),
+            content: "검증해 줘".into(),
+        }],
+    };
+    let body = zai::request_body(&request);
+
+    assert_eq!(body["model"], "glm-5.3");
+    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["thinking"]["type"], "enabled");
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["tools"][0]["type"], "web_search");
+    assert_eq!(body["tools"][0]["web_search"]["enable"], true);
+}
+
+#[test]
+fn consumes_glm_stream_deltas_usage_and_web_search_sources() {
+    let request = ResearchRequest {
+        request_id: "request-glm-stream".into(),
+        model: "glm-5.3".into(),
+        mode: "search".into(),
+        reasoning: "high".into(),
+        messages: vec![InputMessage {
+            role: "user".into(),
+            content: "검증해 줘".into(),
+        }],
+    };
+    let mut state = zai::GlmStreamState {
+        answer: String::new(),
+        metadata: json!({}),
+        saw_finish: false,
+        writing_started: false,
+        last_output_at: None,
+    };
+    let mut stages = Vec::new();
+    let mut emit = |kind: &str, value: &str| {
+        stages.push((kind.to_owned(), value.to_owned()));
+    };
+    let mut noop = |_: &str, _: &str| {};
+    let delta = json!({
+        "choices": [{"index": 0, "delta": {"content": "검증된 답변"}, "finish_reason": null}]
+    });
+    zai::handle_frame(
+        format!("data: {delta}\n\n").as_bytes(),
+        &mut state,
+        &mut emit,
+    )
+    .unwrap();
+    let final_chunk = json!({
+        "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 22, "total_tokens": 33, "completion_tokens_details": {"reasoning_tokens": 4}},
+        "web_search": [
+            {"title": "공식 자료", "link": "https://www.example.com/report#part", "content": "요약"},
+            {"title": "userinfo", "link": "https://user:pass@example.com/secret", "content": "차단"},
+            {"title": "http", "link": "http://example.com", "content": "차단"}
+        ]
+    });
+    zai::handle_frame(
+        format!("data: {final_chunk}\n\n").as_bytes(),
+        &mut state,
+        &mut noop,
+    )
+    .unwrap();
+    let done = b"data: [DONE]\n\n";
+    match zai::handle_frame(done, &mut state, &mut noop).unwrap() {
+        zai::FrameOutcome::Done => {}
+        zai::FrameOutcome::Continue => panic!("expected [DONE] to complete the GLM stream"),
+    }
+
+    let response = zai::finish_stream(&request, &state).unwrap();
+    assert_eq!(response.answer, "검증된 답변");
+    assert_eq!(response.sources.len(), 1);
+    assert_eq!(response.sources[0].domain, "example.com");
+    let usage = response.usage.unwrap();
+    assert_eq!(
+        (usage.input_tokens, usage.output_tokens, usage.total_tokens),
+        (11, 22, 33)
+    );
+    assert_eq!(usage.orchestration_tokens, 4);
+    assert!(stages.contains(&("stage".to_owned(), "writing".to_owned())));
 }
 
 #[test]
@@ -172,8 +263,11 @@ fn restores_a_valid_key_from_secure_storage() {
     let store = Arc::new(MemoryApiKeyStore::new(Some("persisted-key-123")));
     let runtime = FuguRuntime::new_with_store(store, None).unwrap();
 
-    assert!(runtime.has_key());
-    assert_eq!(runtime.key().unwrap().as_str(), "persisted-key-123");
+    assert!(runtime.has_key(Provider::Sakana));
+    assert_eq!(
+        runtime.key(Provider::Sakana).unwrap().as_str(),
+        "persisted-key-123"
+    );
     assert_eq!(runtime.credential_notice(), None);
 }
 
@@ -182,7 +276,7 @@ fn rejects_and_removes_an_invalid_persisted_key() {
     let store = Arc::new(MemoryApiKeyStore::new(Some("bad key")));
     let runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
 
-    assert!(!runtime.has_key());
+    assert!(!runtime.has_key(Provider::Sakana));
     assert_eq!(store.value(), None);
     assert!(runtime
         .credential_notice()
@@ -198,11 +292,17 @@ fn save_failure_does_not_replace_the_active_key() {
 
     assert_eq!(
         runtime
-            .store_key(Zeroizing::new("replacement-key-456".into()))
+            .store_key(
+                Provider::Sakana,
+                Zeroizing::new("replacement-key-456".into())
+            )
             .unwrap_err(),
         "save failed"
     );
-    assert_eq!(runtime.key().unwrap().as_str(), "previous-key-123");
+    assert_eq!(
+        runtime.key(Provider::Sakana).unwrap().as_str(),
+        "previous-key-123"
+    );
     assert_eq!(store.value().as_deref(), Some("previous-key-123"));
 }
 
@@ -212,8 +312,11 @@ fn clear_removes_memory_even_when_secure_delete_fails() {
     let runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
     store.fail_delete.store(true, Ordering::SeqCst);
 
-    assert_eq!(runtime.clear_key_blocking().unwrap_err(), "delete failed");
-    assert!(!runtime.has_key());
+    assert_eq!(
+        runtime.clear_key_blocking(Provider::Sakana).unwrap_err(),
+        "delete failed"
+    );
+    assert!(!runtime.has_key(Provider::Sakana));
     assert_eq!(store.value().as_deref(), Some("persisted-key-123"));
     assert_eq!(
         runtime.credential_notice().as_deref(),
@@ -228,7 +331,7 @@ fn load_failure_is_nonfatal_but_reported() {
 
     let runtime = FuguRuntime::new_with_store(store, None).unwrap();
 
-    assert!(!runtime.has_key());
+    assert!(!runtime.has_key(Provider::Sakana));
     assert_eq!(runtime.credential_notice().as_deref(), Some("load failed"));
 }
 
@@ -237,20 +340,55 @@ fn secure_store_round_trip_restores_the_key() {
     let store = Arc::new(MemoryApiKeyStore::new(None));
     let first_runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
     first_runtime
-        .store_key(Zeroizing::new("round-trip-key-123".into()))
+        .store_key(
+            Provider::Sakana,
+            Zeroizing::new("round-trip-key-123".into()),
+        )
         .unwrap();
     drop(first_runtime);
 
     let restored_runtime = FuguRuntime::new_with_store(store.clone(), None).unwrap();
     assert_eq!(
-        restored_runtime.key().unwrap().as_str(),
+        restored_runtime.key(Provider::Sakana).unwrap().as_str(),
         "round-trip-key-123"
     );
-    restored_runtime.clear_key_blocking().unwrap();
+    restored_runtime
+        .clear_key_blocking(Provider::Sakana)
+        .unwrap();
     drop(restored_runtime);
 
     let cleared_runtime = FuguRuntime::new_with_store(store, None).unwrap();
-    assert!(!cleared_runtime.has_key());
+    assert!(!cleared_runtime.has_key(Provider::Sakana));
+}
+
+#[test]
+fn sakana_and_zai_keys_are_restored_and_cleared_independently() {
+    let sakana_store = Arc::new(MemoryApiKeyStore::new(Some("sakana-key-123")));
+    let zai_store = Arc::new(MemoryApiKeyStore::new(None));
+    let runtime = FuguRuntime::new_with_stores(
+        Arc::clone(&sakana_store) as Arc<dyn ApiKeyStore>,
+        Arc::clone(&zai_store) as Arc<dyn ApiKeyStore>,
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert!(runtime.has_key(Provider::Sakana));
+    assert!(!runtime.has_key(Provider::Zai));
+    runtime
+        .store_key(Provider::Zai, Zeroizing::new("standard-zai-key-456".into()))
+        .unwrap();
+    assert_eq!(
+        runtime.key(Provider::Zai).unwrap().as_str(),
+        "standard-zai-key-456"
+    );
+    assert_eq!(sakana_store.value().as_deref(), Some("sakana-key-123"));
+    assert_eq!(zai_store.value().as_deref(), Some("standard-zai-key-456"));
+
+    runtime.clear_key_blocking(Provider::Zai).unwrap();
+    assert!(runtime.has_key(Provider::Sakana));
+    assert!(!runtime.has_key(Provider::Zai));
+    assert!(zai_store.value().is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -261,7 +399,10 @@ async fn secure_store_operations_do_not_nest_tokio_runtimes() {
     let runtime = Arc::new(FuguRuntime::new_with_store(store.clone(), None).unwrap());
 
     runtime
-        .store_key_async(Zeroizing::new("runtime-safe-key-123".into()))
+        .store_key_async(
+            Provider::Sakana,
+            Zeroizing::new("runtime-safe-key-123".into()),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -269,7 +410,7 @@ async fn secure_store_operations_do_not_nest_tokio_runtimes() {
         Some("runtime-safe-key-123")
     );
 
-    runtime.clear_key().await.unwrap();
+    runtime.clear_key(Provider::Sakana).await.unwrap();
     assert_eq!(*store.value.lock().unwrap(), None);
-    assert!(!runtime.has_key());
+    assert!(!runtime.has_key(Provider::Sakana));
 }

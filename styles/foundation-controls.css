@@ -442,8 +442,14 @@
   line-height: 1.7;
 }
 
-.policy-link {
+.policy-links {
+  display: grid;
+  gap: 0.2rem;
   margin-left: 30px;
+}
+
+.policy-links .policy-link {
+  margin-left: 0;
 }
 
 .conversation-tools h3 {
@@ -530,4 +536,3 @@
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(12px); } }
 @keyframes sonar { from { box-shadow: 0 0 0 0 rgba(71, 190, 182, 0.22); } to { box-shadow: 0 0 0 25px rgba(71, 190, 182, 0); } }
-

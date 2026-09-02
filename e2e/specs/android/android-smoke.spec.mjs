@@ -81,7 +81,7 @@ describe("Android APK smoke", () => {
     await switchToWebview();
     await waitForAppShell();
     await $(".welcome-status button").click();
-    const keyInput = await $("#api-key");
+    const keyInput = await $("#sakana-api-key");
     await keyInput.waitForExist({ timeout: 10_000 });
     // The key field must be masked and must never be a plain text input.
     expect(await keyInput.getAttribute("type")).toBe("password");

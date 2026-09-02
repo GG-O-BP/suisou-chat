@@ -1,6 +1,8 @@
 use crate::app_state::AppState;
 use crate::commands::workspace::save_workspace_snapshot;
-use crate::models::{ResearchJob, ResearchRequest, StartResearchResponse, Workspace};
+use crate::models::{
+    provider_for_model, ResearchJob, ResearchRequest, StartResearchResponse, Workspace,
+};
 use tauri::State;
 
 // The frontend sends the start payload as flat camelCase fields (see
@@ -18,8 +20,9 @@ pub(crate) fn start_research(
     workspace: Workspace,
     state: State<'_, AppState>,
 ) -> Result<StartResearchResponse, String> {
-    if !state.fugu.has_key() {
-        return Err("Sakana API 키를 먼저 연결해 주세요.".into());
+    let provider = provider_for_model(&request.model)?;
+    if !state.fugu.has_key(provider) {
+        return Err(format!("{} 키를 먼저 연결해 주세요.", provider.key_label()));
     }
     state.research_jobs.ensure_can_start(
         &conversation_id,

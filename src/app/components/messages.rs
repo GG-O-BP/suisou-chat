@@ -51,8 +51,8 @@ pub(crate) fn MessageView(props: MessageViewProps) -> View {
     view! {
         article(class=format!("message {role_class} status-{status_class}")) {
             div(class="message-meta") {
-                span(class="role-mark", aria-hidden="true") { (if is_assistant { "F" } else { "Q" }) }
-                strong { (if is_assistant { "Sakana Fugu" } else { "질문" }) }
+                span(class="role-mark", aria-hidden="true") { (if is_assistant { "A" } else { "Q" }) }
+                strong { (if is_assistant { "AI 답변" } else { "질문" }) }
                 (status_label.map(|label| view! { span(class="partial-label") { (label) } }).unwrap_or_default())
                 time { (format_relative_time(message.created_at)) }
             }
@@ -108,6 +108,11 @@ pub(crate) fn StreamingMessage() -> View {
             .workspace
             .with(|workspace| workspace.settings.last_mode.clone())
     });
+    let selected_provider = create_memo(move || {
+        state
+            .workspace
+            .with(|workspace| provider_for_model(&workspace.settings.model).to_owned())
+    });
     let is_creative = create_selector(move || selected_mode.get_clone() == "create");
     // Gate the progress-vs-answer branch on a *memoized* boolean. Reading
     // `streamed_text` directly inside the `(if …)` below would re-subscribe the
@@ -124,7 +129,7 @@ pub(crate) fn StreamingMessage() -> View {
                 article(class="message assistant streaming", aria-busy="true") {
                     div(class="message-meta") {
                         span(class="role-mark sonar") { span {} }
-                        strong { "Sakana Fugu" }
+                        strong { (move || provider_label(&selected_provider.get_clone())) }
                         span(class="research-stage") { (move || stage_label(&state.stage.get_clone(), &selected_mode.get_clone())) }
                     }
                     (if !has_stream.get() {

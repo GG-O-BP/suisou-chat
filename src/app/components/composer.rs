@@ -21,6 +21,11 @@ pub(crate) fn Composer() -> View {
             .workspace
             .with(|workspace| workspace.settings.reasoning.clone())
     });
+    let provider = create_memo(move || {
+        state
+            .workspace
+            .with(|workspace| provider_for_model(&workspace.settings.model).to_owned())
+    });
     let selected_mode = create_memo(move || {
         state
             .workspace
@@ -132,15 +137,27 @@ pub(crate) fn Composer() -> View {
                 div(class="composer-bottom") {
                     div(class="model-controls") {
                         label {
-                            span(class="sr-only") { "Fugu 모델" }
+                            span(class="sr-only") { "AI 모델" }
                             select(disabled=move || state.is_running.get() || !state.storage_writable.get(), on:change=move |event: Event| {
                                 if let Some(value) = select_value(event) {
-                                    state.workspace.update(|workspace| workspace.settings.model = value);
+                                    let selected_provider = provider_for_model(&value).to_owned();
+                                    state.workspace.update(|workspace| {
+                                        workspace.settings.model = value;
+                                        workspace.settings.provider = selected_provider.clone();
+                                        if selected_provider == "zai"
+                                            && workspace.settings.reasoning == "xhigh"
+                                        {
+                                            workspace.settings.reasoning = "high".into();
+                                        }
+                                    });
                                     state.persist_workspace();
                                 }
                             }) {
                                 option(value="fugu", selected=move || model.get_clone() == "fugu") { "Fugu" }
-                                option(value="fugu-ultra", selected=move || model.get_clone() != "fugu") { "Fugu Ultra" }
+                                option(value="fugu-ultra", selected=move || model.get_clone() == "fugu-ultra") { "Fugu Ultra" }
+                                option(value="fugu-ultra-v1.0", selected=move || model.get_clone() == "fugu-ultra-v1.0") { "Fugu Ultra v1.0" }
+                                option(value="fugu-ultra-v1.1", selected=move || model.get_clone() == "fugu-ultra-v1.1") { "Fugu Ultra v1.1" }
+                                option(value="glm-5.3", selected=move || model.get_clone() == "glm-5.3") { "GLM" }
                             }
                         }
                         span(class="control-divider") {}
@@ -152,9 +169,18 @@ pub(crate) fn Composer() -> View {
                                     state.persist_workspace();
                                 }
                             }) {
-                                option(value="high", selected=move || reasoning.get_clone() == "high") { "High" }
-                                option(value="xhigh", selected=move || reasoning.get_clone() == "xhigh") { "X-High" }
-                                option(value="max", selected=move || reasoning.get_clone() == "max") { "Max" }
+                                (if provider.get_clone() == "zai" {
+                                    view! {
+                                        option(value="high", selected=move || reasoning.get_clone() == "high") { "High" }
+                                        option(value="max", selected=move || reasoning.get_clone() != "high") { "Max" }
+                                    }
+                                } else {
+                                    view! {
+                                        option(value="high", selected=move || reasoning.get_clone() == "high") { "High" }
+                                        option(value="xhigh", selected=move || reasoning.get_clone() == "xhigh") { "X-High" }
+                                        option(value="max", selected=move || reasoning.get_clone() == "max") { "Max" }
+                                    }
+                                })
                             }
                         }
                     }

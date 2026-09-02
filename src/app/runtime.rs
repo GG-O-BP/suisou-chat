@@ -114,12 +114,27 @@ pub(super) async fn BootstrapWorkspace() -> View {
             batch(move || {
                 state.selected_sources.set(Vec::new());
                 state.active_id.set(String::new());
-                state.key_configured.set(response.key_configured);
-                state.connection_message.set(if response.key_configured {
-                    "보안 저장소에서 자동 복원됨".into()
-                } else {
-                    String::new()
-                });
+                for credential in response.credentials {
+                    if credential.provider == "zai" {
+                        state.zai_key_configured.set(credential.key_configured);
+                        state
+                            .zai_connection_message
+                            .set(if credential.key_configured {
+                                "보안 저장소에서 자동 복원됨".into()
+                            } else {
+                                String::new()
+                            });
+                    } else {
+                        state.sakana_key_configured.set(credential.key_configured);
+                        state
+                            .sakana_connection_message
+                            .set(if credential.key_configured {
+                                "보안 저장소에서 자동 복원됨".into()
+                            } else {
+                                String::new()
+                            });
+                    }
+                }
                 state.storage_label.set(response.storage_label);
                 state.storage_writable.set(response.storage_writable);
                 let mut workspace = response.workspace;

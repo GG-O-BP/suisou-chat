@@ -17,9 +17,18 @@ impl AppState {
             self.show_toast("질문은 20,000자 이하로 입력해 주세요.", "error");
             return;
         }
-        if !self.key_configured.get_untracked() {
+        let selected_provider = self
+            .workspace
+            .with_untracked(|workspace| provider_for_model(&workspace.settings.model).to_owned());
+        if !self.key_configured_for(&selected_provider) {
             self.panel.set(Panel::Settings);
-            self.show_toast("먼저 설정에서 Sakana API 키를 연결해 주세요.", "warning");
+            self.show_toast(
+                format!(
+                    "먼저 설정에서 {} API 키를 연결해 주세요.",
+                    provider_label(&selected_provider)
+                ),
+                "warning",
+            );
             return;
         }
 
@@ -104,6 +113,7 @@ impl AppState {
                 occurred_at: started_at,
             }]);
             self.is_running.set(true);
+            self.running_provider.set(selected_provider);
             self.active_request.set(active_request_id);
             self.active_assistant_message.set(active_assistant_id);
             self.research_start_pending.set(true);
@@ -177,6 +187,7 @@ impl AppState {
                         self.is_running.set(false);
                         self.active_request.set(String::new());
                         self.active_assistant_message.set(String::new());
+                        self.running_provider.set(String::new());
                         self.observe_stage("failed".into(), now_millis());
                         self.last_failed_question.set(question);
                     });
@@ -225,10 +236,12 @@ impl AppState {
         if !is_current {
             let request_id = job.request_id.clone();
             let assistant_message_id = job.assistant_message_id.clone();
+            let job_provider = job.provider.clone();
             batch(move || {
                 self.active_request.set(request_id);
                 self.active_assistant_message.set(assistant_message_id);
                 self.is_running.set(true);
+                self.running_provider.set(job_provider);
                 self.last_failed_question.set(String::new());
                 self.reset_stream();
             });
@@ -257,6 +270,7 @@ impl AppState {
             self.is_running.set(false);
             self.active_request.set(String::new());
             self.active_assistant_message.set(String::new());
+            self.running_provider.set(String::new());
             self.reset_stream();
         });
     }
@@ -582,6 +596,7 @@ impl AppState {
             self.is_running.set(false);
             self.active_request.set(String::new());
             self.active_assistant_message.set(String::new());
+            self.running_provider.set(String::new());
             self.reset_stream();
         });
         if !terminal_stage {

@@ -21,6 +21,7 @@ describe("native Tauri boundary", () => {
         revision: bootstrap.workspace_revision,
         conversations: [],
         settings: {
+          provider: "sakana",
           model: "fugu",
           reasoning: "high",
           theme: "system",
@@ -58,6 +59,7 @@ describe("native Tauri boundary", () => {
         },
       ],
       settings: {
+        provider: "sakana",
         model: "fugu",
         reasoning: "high",
         theme: "dark",

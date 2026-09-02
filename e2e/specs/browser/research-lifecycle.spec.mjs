@@ -1,4 +1,5 @@
 import {
+  bridgeCalls,
   openFixture,
   setScenario,
   submitQuestion,
@@ -57,6 +58,29 @@ describe("research lifecycle", () => {
     await expect($(".retry-banner.failed")).toBeDisplayed();
   });
 
+  it("streams a GLM request with the official model identifier", async () => {
+    await openFixture("empty");
+    await $(".settings-button").click();
+    await $("#zai-api-key").setValue("e2e-standard-zai-key-1234567890");
+    await $("#zai-api-key ~ button[type=submit]").click();
+    await expect($(".key-connected")).toHaveText(
+      expect.stringContaining("Z.ai GLM 준비 완료"),
+    );
+    await $('button[aria-label="알림 닫기"]').click();
+    await $('button[aria-label="설정 닫기"]').click();
+
+    const selects = await $$(".model-controls select");
+    await selects[0].selectByVisibleText("GLM");
+    await expect(selects[1]).toHaveText(expect.stringContaining("High"));
+    await expect(selects[1]).not.toHaveText(expect.stringContaining("X-High"));
+
+    await submitQuestion("GLM 스트리밍을 검증해 줘.", "search");
+    await waitForAnswer();
+    const calls = await bridgeCalls("start_research");
+    expect(calls.at(-1).request.model).toBe("glm-5.3");
+    expect(calls.at(-1).request.model).not.toBe("glm");
+  });
+
   it("opens settings instead of sending without a key", async () => {
     await openFixture("empty");
     await selectCreateAndType();
@@ -65,6 +89,19 @@ describe("research lifecycle", () => {
     await expect($(".settings-panel")).toHaveElementClass("visible");
     await expect($(".toast")).toHaveText(
       expect.stringContaining("Sakana API 키"),
+    );
+  });
+
+  it("does not treat a missing Sakana key as a connected GLM key", async () => {
+    await openFixture("empty");
+    const selects = await $$(".model-controls select");
+    await selects[0].selectByVisibleText("GLM");
+    await $("#question-input").setValue("GLM 키 없이 보낼 수 없는지 확인해 줘.");
+    await $(".send-button").click();
+
+    await expect($(".settings-panel")).toHaveElementClass("visible");
+    await expect($(".toast")).toHaveText(
+      expect.stringContaining("Z.ai GLM API 키"),
     );
   });
 });

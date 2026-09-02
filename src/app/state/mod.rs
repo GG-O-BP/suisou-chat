@@ -39,10 +39,15 @@ pub(super) struct AppState {
     pub(super) pending_stream: Signal<String>,
     pub(super) pending_stream_request: Signal<String>,
     pub(super) last_stream_sequence: Signal<u64>,
-    pub(super) key_configured: Signal<bool>,
-    pub(super) key_input: Signal<String>,
-    pub(super) key_busy: Signal<bool>,
-    pub(super) connection_message: Signal<String>,
+    pub(super) sakana_key_configured: Signal<bool>,
+    pub(super) zai_key_configured: Signal<bool>,
+    pub(super) sakana_key_input: Signal<String>,
+    pub(super) zai_key_input: Signal<String>,
+    pub(super) sakana_key_busy: Signal<bool>,
+    pub(super) zai_key_busy: Signal<bool>,
+    pub(super) sakana_connection_message: Signal<String>,
+    pub(super) zai_connection_message: Signal<String>,
+    pub(super) running_provider: Signal<String>,
     pub(super) save_state: Signal<String>,
     pub(super) last_failed_question: Signal<String>,
     pub(super) toast: Signal<String>,
@@ -80,10 +85,15 @@ impl AppState {
             pending_stream: create_signal(String::new()),
             pending_stream_request: create_signal(String::new()),
             last_stream_sequence: create_signal(0),
-            key_configured: create_signal(false),
-            key_input: create_signal(String::new()),
-            key_busy: create_signal(false),
-            connection_message: create_signal(String::new()),
+            sakana_key_configured: create_signal(false),
+            zai_key_configured: create_signal(false),
+            sakana_key_input: create_signal(String::new()),
+            zai_key_input: create_signal(String::new()),
+            sakana_key_busy: create_signal(false),
+            zai_key_busy: create_signal(false),
+            sakana_connection_message: create_signal(String::new()),
+            zai_connection_message: create_signal(String::new()),
+            running_provider: create_signal(String::new()),
             save_state: create_signal(String::new()),
             last_failed_question: create_signal(String::new()),
             toast: create_signal(String::new()),
@@ -114,6 +124,15 @@ impl AppState {
 #[serde(rename_all = "camelCase")]
 struct ApiKeyArgs {
     api_key: String,
+    #[serde(rename = "providerName")]
+    provider: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderArgs {
+    #[serde(rename = "providerName")]
+    provider: String,
 }
 
 #[derive(Clone, Serialize)]

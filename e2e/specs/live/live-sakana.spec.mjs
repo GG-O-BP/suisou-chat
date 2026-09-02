@@ -16,6 +16,7 @@ describe("live Sakana smoke", () => {
             revision: bootstrap.workspace_revision,
             conversations: [],
             settings: {
+              provider: "sakana",
               model: "fugu",
               reasoning: "high",
               theme: "system",

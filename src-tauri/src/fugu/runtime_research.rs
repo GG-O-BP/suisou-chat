@@ -11,12 +11,21 @@ impl FuguRuntime {
         F: FnMut(&str, &str) + Send,
     {
         validate_research_request(&request)?;
-        let key = self.key()?;
-        self.research_inner(&request, key, cancellation, &mut emit)
-            .await
+        let provider = provider_for_model(&request.model)?;
+        let key = self.key(provider)?;
+        match provider {
+            Provider::Sakana => {
+                self.research_sakana(&request, key, cancellation, &mut emit)
+                    .await
+            }
+            Provider::Zai => {
+                self.research_zai(&request, key, cancellation, &mut emit)
+                    .await
+            }
+        }
     }
 
-    async fn research_inner<F>(
+    async fn research_sakana<F>(
         &self,
         request: &ResearchRequest,
         key: Zeroizing<String>,
@@ -36,7 +45,7 @@ impl FuguRuntime {
         let mut body = json!({
             "model": request.model,
             "input": input,
-            "instructions": instructions(&request.mode),
+            "instructions": instructions(&request.mode, Provider::Sakana),
             "reasoning": {"effort": request.reasoning},
             "max_output_tokens": output_limit(&request.mode),
             "stream": true
@@ -54,10 +63,10 @@ impl FuguRuntime {
             .send();
         let response = tokio::select! {
             _ = cancellation.cancelled() => return cancelled(),
-            response = send => response.map_err(network_error)?,
+            response = send => response.map_err(|error| network_error(error, Provider::Sakana))?,
         };
         if !response.status().is_success() {
-            return Err(http_error(response).await);
+            return Err(http_error(response, Provider::Sakana).await);
         }
 
         if matches!(request.mode.as_str(), "search" | "deep") {
@@ -83,7 +92,7 @@ impl FuguRuntime {
             }
             let bytes = tokio::select! {
                 _ = cancellation.cancelled() => return cancelled(),
-                bytes = response.bytes() => bytes.map_err(network_error)?,
+                bytes = response.bytes() => bytes.map_err(|error| network_error(error, Provider::Sakana))?,
             };
             if bytes.len() > MAX_RESPONSE_BYTES {
                 return Err("Sakana 응답이 안전한 크기 제한을 초과했습니다.".into());
@@ -105,5 +114,18 @@ impl FuguRuntime {
             sources,
             usage,
         })
+    }
+
+    async fn research_zai<F>(
+        &self,
+        request: &ResearchRequest,
+        key: Zeroizing<String>,
+        cancellation: CancellationToken,
+        emit: &mut F,
+    ) -> Result<ResearchResponse, String>
+    where
+        F: FnMut(&str, &str) + Send,
+    {
+        zai::research(&self.client, request, key, cancellation, &mut *emit).await
     }
 }

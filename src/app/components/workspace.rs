@@ -28,6 +28,19 @@ pub(crate) fn TopBar() -> View {
         })
     });
     let source_count = state.selected_sources.map(Vec::len);
+    let selected_provider = create_memo(move || {
+        state
+            .workspace
+            .with(|workspace| provider_for_model(&workspace.settings.model).to_owned())
+    });
+    let key_configured = create_selector(move || {
+        let provider = selected_provider.get_clone();
+        if provider == "zai" {
+            state.zai_key_configured.get()
+        } else {
+            state.sakana_key_configured.get()
+        }
+    });
 
     view! {
         header(class="topbar") {
@@ -40,16 +53,28 @@ pub(crate) fn TopBar() -> View {
             }
             div(class="topbar-actions") {
                 span(
-                    class=move || format!("connection-pill {}", if state.key_configured.get() { "connected" } else { "disconnected" }),
+                    class=move || format!("connection-pill {}", if key_configured.get() { "connected" } else { "disconnected" }),
                     role="status",
-                    aria-label=move || if state.key_configured.get() { "Sakana Fugu 연결됨" } else { "API 키 필요" }
+                    aria-label=move || {
+                        if key_configured.get() {
+                            format!("{} 연결됨", provider_label(&selected_provider.get_clone()))
+                        } else {
+                            format!("{} API 키 필요", provider_label(&selected_provider.get_clone()))
+                        }
+                    }
                 ) {
                     span(class="connection-dot") {}
                     span(class="connection-label") {
-                        (move || if state.key_configured.get() { "Sakana Fugu 연결됨" } else { "API 키 필요" })
+                        (move || {
+                            if key_configured.get() {
+                                format!("{} 연결됨", provider_label(&selected_provider.get_clone()))
+                            } else {
+                                format!("{} API 키 필요", provider_label(&selected_provider.get_clone()))
+                            }
+                        })
                     }
                     span(class="connection-label-mobile", aria-hidden="true") {
-                        (move || if state.key_configured.get() { "연결됨" } else { "키 필요" })
+                        (move || if key_configured.get() { "연결됨" } else { "키 필요" })
                     }
                 }
                 button(class="icon-button", aria-label="출처 패널 열기", on:click=move |_| state.panel.set(Panel::Sources)) {

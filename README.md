@@ -1,25 +1,25 @@
 # Suisou
 
-Suisou는 Sakana Fugu Responses API를 사용하는 로컬 우선 AI 리서치 워크스페이스입니다. Tauri 2와 Sycamore 0.9로 작성되어 데스크톱과 모바일 셸을 공유하며, 검색형 답변을 빠르게 읽고 출처를 다시 검토하는 흐름에 맞춘 한국어 UI를 제공합니다.
+Suisou는 Sakana Fugu와 Z.ai GLM을 선택해 쓸 수 있는 로컬 우선 AI 리서치 워크스페이스입니다. Tauri 2와 Sycamore 0.9로 작성되어 데스크톱과 모바일 셸을 공유하며, 검색형 답변을 빠르게 읽고 출처를 다시 검토하는 흐름에 맞춘 한국어 UI를 제공합니다.
 
-> Sakana API 접근 권한은 계정별로 달라질 수 있습니다. 앱은 `/v1/models`, `/v1/responses`, `web_search`, SSE 이벤트를 사용합니다. 배포 전 발급받은 키로 사용 가능한 Fugu 모델과 과금·약관·지역 정책을 확인하세요.
+> API 접근 권한은 계정별로 달라질 수 있습니다. Sakana는 `/v1/models`, `/v1/responses`, `web_search`, Responses SSE 이벤트를 사용합니다. Z.ai는 표준 Model API의 `/chat/completions`, `web_search`, Chat Completions SSE를 사용하며 초기 지원 모델은 `glm-5.3`입니다. 배포 전 두 provider의 실제 키로 모델·도구 권한과 과금·약관·지역 정책을 확인하세요.
 
 ## 구현 범위
 
 - 빠른 답변, 웹 검색, 심층 연구의 3가지 모드
-- Fugu 모델·추론 강도 선택과 대화 문맥 전송
+- Fugu/Fugu Ultra/GLM 모델과 provider별 추론 강도 선택, 대화 문맥 전송
 - 네이티브 Rust HTTPS 클라이언트, SSE 델타·단계·출처 스트리밍
 - 요청 취소, 부분 답변 보존, 오류 후 재시도, 인증 만료 안내
 - 인용 출처 패널, HTTPS URL 검증, 외부 브라우저 열기
 - 대화 검색, 고정, 삭제, Markdown 내보내기
 - 원자적 JSON 저장, 백업 복구, 손상 파일 읽기 전용 보호, 오프라인 기록 검색
 - 시스템·라이트·다크 테마, 반응형 레이아웃, 키보드·스크린리더 레이블
-- 운영체제 보안 저장소에 보관하고 앱 시작 시 자동 복원하는 API 키
+- 운영체제 보안 저장소에 provider별로 보관하고 앱 시작 시 자동 복원하는 API 키
 - 외부 폰트/CDN 없는 오프라인 자산과 제한된 Tauri 권한/CSP
 
 ## 프라이버시 경계
 
-대화 기록과 설정은 기기 앱 데이터 디렉터리의 `workspace.json`에 저장됩니다. API 키는 `workspace.json`, 브라우저 저장소, 로그가 아니라 운영체제 보안 자격 증명 저장소에 저장되며 앱 시작 시 자동 복원됩니다. Linux에서는 Secret Service, Windows에서는 Credential Manager, macOS·iOS에서는 Keychain, Android에서는 Keystore로 보호되는 저장소를 사용합니다. 질문과 선택된 이전 대화는 답변 생성을 위해 Sakana API로 전송됩니다. 웹 검색 모드에서는 Sakana 측 검색 서비스가 질의를 처리하므로 민감한 정보는 입력하지 마세요.
+대화 기록과 설정은 기기 앱 데이터 디렉터리의 `workspace.json`에 저장됩니다. Sakana 키와 Z.ai 키는 `workspace.json`, 브라우저 저장소, 로그가 아니라 운영체제 보안 자격 증명 저장소의 서로 다른 항목에 저장되며 앱 시작 시 자동 복원됩니다. Linux에서는 Secret Service, Windows에서는 Credential Manager, macOS·iOS에서는 Keychain, Android에서는 Keystore로 보호되는 저장소를 사용합니다. 질문과 선택된 이전 대화는 답변 생성을 위해 선택한 provider API로 전송됩니다. 웹 검색 모드에서는 해당 provider의 검색 서비스가 질의를 처리하므로 민감한 정보는 입력하지 마세요.
 
 이 버전은 계정·클라우드 동기화를 의도적으로 포함하지 않습니다. 기록 열람·검색은 오프라인에서도 가능하지만 새 답변과 웹 출처 열기는 네트워크가 필요합니다.
 
@@ -57,15 +57,22 @@ npm run e2e
 ```
 
 결정론적 브라우저 기능 테스트, 렌더링 성능 예산, 실제 Tauri/Rust IPC
-테스트를 실행합니다. 실제 Sakana 요청은 별도의 opt-in 명령입니다.
+테스트를 실행합니다. 실제 provider 요청은 별도의 opt-in 명령입니다.
 
 ```bash
 SUISOU_E2E_LIVE=1 npm run e2e:live
+SUISOU_E2E_LIVE=1 npm run e2e:live:glm
 ```
 
-상세 구조와 CI/보안 경계는 [`docs/e2e.md`](docs/e2e.md)를 참고하세요.
+`e2e:live`는 Sakana와 GLM을 모두 실행하고, `e2e:live:glm`은 표준 Z.ai
+Model API 요청만 실행합니다. 상세 구조와 CI/보안 경계는
+[`docs/e2e.md`](docs/e2e.md)를 참고하세요.
 
-앱을 연 뒤 설정에서 Sakana API 키를 입력하고 **연결**을 누르세요. 연결 확인에 성공한 키는 이 기기의 운영체제 보안 저장소에 저장됩니다.
+앱을 연 뒤 설정에서 사용할 provider의 API 키를 각각 입력하고 **연결**을
+누르세요. Sakana는 모델 목록으로 키를 검증합니다. Z.ai는 공개된 일반
+Model API 모델 목록 엔드포인트가 없으므로 키 형식과 정적 카탈로그를
+확인한 뒤 첫 요청으로 계정 권한을 검증합니다. GLM Coding Plan 전용
+키/endpoint는 지원하지 않습니다.
 
 ### Android 빌드
 
@@ -132,11 +139,11 @@ trunk build --release
 cargo tauri build --no-bundle
 ```
 
-현재 검증 기준에서는 Clippy가 경고 없이 통과하고 18개 테스트가 통과합니다. 요청 검증, UTF-8 분할/CRLF SSE, 답변·인용·사용량 추출, HTTPS 출처 필터링, API 키 보안 저장·복원·삭제 오류, 작업 공간 저장·백업 복구, Markdown 내보내기를 검사합니다.
+현재 검증 기준에서는 Clippy가 경고 없이 통과하고 51개 작업 공간 테스트가 통과합니다. provider 호환성, GLM 요청/스트리밍/출처/사용량 매핑, 요청 검증, UTF-8 분할/CRLF SSE, API 키 보안 저장·복원·삭제 오류, 작업 공간 저장·백업 복구, Markdown 내보내기를 검사합니다.
 
 ## 출시 전 체크리스트
 
-- 실제 Sakana 키로 빠른/검색/심층 모드와 모델명을 확인
+- 실제 Sakana 및 표준 Z.ai GLM 키로 빠른/검색/심층 모드, 모델명, 웹 검색 스키마를 확인
 - 취소·재시도·인증 실패·오프라인·재시작 복구를 대상 OS에서 확인
 - Windows/macOS/Linux 번들 서명과 자동 업데이트 정책 결정
 - Android/iOS 권한, 패키지 ID(`com.ggobp.suisou-chat`), 앱 링크·공유 UX 확인
