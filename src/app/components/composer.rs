@@ -80,7 +80,7 @@ pub(crate) fn Composer() -> View {
                     div(class="mobile-dive-control", role="status", aria-live="polite") {
                         span(class="mobile-dive-signal", aria-hidden="true") {}
                         div {
-                            small { "PROCESS ACTIVE" }
+                            small { "PROCESSING" }
                             strong { (move || stage_label(&state.stage.get_clone(), &selected_mode.get_clone())) }
                         }
                         span(class="mobile-dive-depth") {
@@ -111,15 +111,11 @@ pub(crate) fn Composer() -> View {
                     ModeButton(value="deep", index="03", label="심층 조사", detail="넓고 깊게", icon_name="deep")
                     ModeButton(value="create", index="04", label="창작", detail="글·대사·아이디어", icon_name="create")
                 }
-                div(class="capsule-depth", aria-live="polite") {
-                    small { "DIVE PROFILE" }
-                    strong { (move || mode_depth(&selected_mode.get_clone())) }
-                }
             }
             div(class="composer") {
                 div(class="capsule-seal", aria-hidden="true") {
                     span {}
-                    (move || if selected_mode.get_clone() == "create" { "CREATIVE CAPSULE" } else { "RESEARCH CAPSULE" })
+                    (move || if selected_mode.get_clone() == "create" { "CREATIVE" } else { "RESEARCH" })
                     span {}
                 }
                 label(class="sr-only", r#for="question-input") { "질문 입력" }
@@ -128,7 +124,7 @@ pub(crate) fn Composer() -> View {
                     id="question-input",
                     bind:value=state.composer,
                     on:keydown=keydown,
-                    placeholder=move || if selected_mode.get_clone() == "create" { "어떤 이야기를 함께 만들어 볼까요?" } else { "무엇을 깊이 알아볼까요?" },
+                placeholder=move || if selected_mode.get_clone() == "create" { "어떤 글을 써 볼까요?" } else { "무엇을 알아볼까요?" },
                     rows="1",
                     maxlength="20000",
                     disabled=move || state.is_running.get() || !state.storage_writable.get()
@@ -181,7 +177,7 @@ pub(crate) fn Composer() -> View {
                         "저장된 대화를 복구해야 해서 현재 읽기 전용입니다. 새 질문을 보내거나 기록을 저장할 수 없습니다."
                     }
                     _ if selected_mode.get_clone() == "create" => {
-                        "Enter로 전송 · Shift+Enter로 줄바꿈 · 장르, 분위기, 길이, 독자를 알려주면 더 정교하게 만들 수 있어요"
+                        "Enter로 전송 · Shift+Enter로 줄바꿈 · 장르, 분위기, 길이, 독자를 알려주면 더 정교하게 만들 수 있습니다"
                     }
                     _ => {
                         "Enter로 전송 · Shift+Enter로 줄바꿈 · 출처는 반드시 원문에서 다시 확인하세요"

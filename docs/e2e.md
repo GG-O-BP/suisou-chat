@@ -90,11 +90,11 @@ emulator, and the NDK toolchain to `PATH`. `ANDROID_USER_HOME` is pinned so
 
 At runtime the frontend marks Android System WebView with
 `data-platform="android"`. The Android-only stylesheet keeps the same
-observatory composition and color hierarchy while removing expensive blur,
+composition and color hierarchy while removing expensive blur,
 large shadow, mask, and idle-animation raster work that can stall first paint
 on SwiftShader emulators and lower-end devices. Desktop and iOS rendering are
 unchanged. The Android window theme and lightweight HTML boot surface also keep
-a stable aquarium-colored loading state visible until the first WebView frame,
+a stable themed loading state visible until the first WebView frame,
 instead of exposing a blank white window during cold startup.
 
 ### Run

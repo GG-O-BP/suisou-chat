@@ -222,31 +222,31 @@ pub(super) fn select_value(event: Event) -> Option<String> {
 
 pub(super) fn stage_label(stage: &str, mode: &str) -> &'static str {
     match (stage, mode) {
-        ("creating", _) => "창작 처리 활성",
-        ("reasoning", "create") => "구성 처리 신호 감지",
-        ("writing", "create") => "창작물 출력 수신 중",
+        ("creating", _) => "창작 준비 중",
+        ("reasoning", "create") => "구성 중",
+        ("writing", "create") => "창작 결과 수신 중",
         ("done", "create") => "창작 완료",
-        ("connecting", _) => "요청 연결 중",
-        ("searching", _) => "웹 탐색 활성",
-        ("reasoning", _) => "응답 처리 활성",
-        ("writing", _) => "답변 출력 수신 중",
-        ("done", _) => "처리 완료",
-        ("failed" | "interrupted", _) => "처리 중단",
+        ("connecting", _) => "연결 중",
+        ("searching", _) => "웹 검색 중",
+        ("reasoning", _) => "답변 구성 중",
+        ("writing", _) => "답변 수신 중",
+        ("done", _) => "완료",
+        ("failed" | "interrupted", _) => "중단됨",
         ("cancelled", _) => "사용자가 중단함",
-        _ => "응답 처리 중",
+        _ => "처리 중",
     }
 }
 
 pub(super) fn stage_description(stage: &str, mode: &str) -> &'static str {
     match (stage, mode) {
         ("connecting", _) => "요청을 전달하고 응답 연결을 기다리고 있습니다.",
-        ("searching", _) => "웹 검색 도구의 활동이 관측되었습니다.",
+        ("searching", _) => "웹 검색이 진행 중입니다.",
         ("creating", _) => "창작 요청이 처리 중이며 아직 출력은 시작되지 않았습니다.",
-        ("reasoning", "create") => "API 스트림에서 구성 처리 신호가 관측되었습니다.",
-        ("reasoning", _) => "응답 생성 처리가 활성 상태이며 아직 출력은 시작되지 않았습니다.",
-        ("writing", "create") => "창작물 텍스트가 실제로 수신되고 있습니다.",
-        ("writing", _) => "답변 텍스트가 실제로 수신되고 있습니다.",
-        _ => "관측 가능한 다음 이벤트를 기다리고 있습니다.",
+        ("reasoning", "create") => "모델이 결과를 구성하고 있습니다.",
+        ("reasoning", _) => "모델이 답변을 구성하고 있습니다.",
+        ("writing", "create") => "창작 결과를 받아오고 있습니다.",
+        ("writing", _) => "답변을 받아오고 있습니다.",
+        _ => "다음 진행 상태를 기다리고 있습니다.",
     }
 }
 
@@ -279,15 +279,6 @@ pub(super) fn event_position(occurred_at: u64, started_at: u64, now: u64) -> f64
     let span = now.saturating_sub(started_at).max(1_000);
     let elapsed = occurred_at.saturating_sub(started_at).min(span);
     4.0 + (elapsed as f64 / span as f64) * 88.0
-}
-
-pub(super) fn mode_depth(mode: &str) -> &'static str {
-    match mode {
-        "quick" => "SURFACE · 40 M",
-        "deep" => "ABYSS · 1,880 M",
-        "create" => "ATELIER · 720 M",
-        _ => "REEF · 480 M",
-    }
 }
 
 #[cfg(test)]

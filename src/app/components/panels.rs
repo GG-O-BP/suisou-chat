@@ -9,7 +9,7 @@ pub(crate) fn SourcesPanel() -> View {
     view! {
         aside(class=move || format!("sources-panel {}", if state.panel.get() == Panel::Sources { "visible" } else { "" }), role="dialog", aria-modal="true", aria-hidden=move || (state.panel.get() != Panel::Sources).to_string(), aria-label="출처") {
             div(class="panel-header") {
-                div { small { "EVIDENCE DECK" } h2 { "검색·인용 출처" } }
+                div { small { "EVIDENCE" } h2 { "검색·인용 출처" } }
                 button(class="icon-button", aria-label="출처 패널 닫기", on:click=move |_| state.close_panel()) { (icon("close")) }
             }
             (if sources_empty.get() {
@@ -61,7 +61,7 @@ pub(crate) fn SourceView(props: SourceViewProps) -> View {
                 i(aria-hidden="true") {}
             }
             div(class="source-content") {
-                small { "SPECIMEN · " (source.domain) }
+                small { "SOURCE · " (source.domain) }
                 h3 { (source.title) }
                 (snippet)
                 button(on:click=move |_| open_url(state, url.clone())) { "원문 열기" (icon("external")) }
@@ -78,7 +78,7 @@ pub(crate) fn SettingsPanel() -> View {
     view! {
         aside(class=move || format!("settings-panel {}", if state.panel.get() == Panel::Settings { "visible" } else { "" }), role="dialog", aria-modal="true", aria-hidden=move || (state.panel.get() != Panel::Settings).to_string(), aria-label="설정") {
             div(class="panel-header") {
-                div { small { "CONTROL ROOM" } h2 { "설정" } }
+                div { small { "APPLICATION" } h2 { "설정" } }
                 button(class="icon-button", aria-label="설정 닫기", on:click=move |_| state.close_panel()) { (icon("close")) }
             }
             div(class="settings-content") {

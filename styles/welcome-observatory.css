@@ -205,8 +205,7 @@
     display: none;
   }
 
-  .welcome-observatory .tank-reticle,
-  .welcome-observatory .tank-telemetry {
+  .welcome-observatory .tank-reticle {
     display: flex;
   }
 
@@ -222,14 +221,6 @@
 
   .welcome-observatory .tank-reticle::after {
     height: 62px;
-  }
-
-  .welcome-observatory .tank-telemetry {
-    right: 5%;
-    bottom: 8%;
-    left: 5%;
-    padding: 0.28rem 0.35rem;
-    font-size: 0.34rem;
   }
 
   .welcome-observatory .welcome-status {

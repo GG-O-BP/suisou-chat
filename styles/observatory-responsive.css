@@ -17,9 +17,6 @@
     display: none;
   }
 
-  .capsule-depth {
-    min-width: 132px;
-  }
 }
 
 @media (hover: none) {
@@ -209,7 +206,6 @@
   .tank-rim::after,
   .rim-mark,
   .tank-reticle,
-  .tank-telemetry,
   .water-caustic {
     display: none;
   }
@@ -444,10 +440,6 @@
   }
 
   .mode-copy small {
-    display: none;
-  }
-
-  .capsule-depth {
     display: none;
   }
 

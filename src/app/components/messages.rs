@@ -132,11 +132,11 @@ pub(crate) fn StreamingMessage() -> View {
                             div(
                                 class=move || format!("research-progress stage-{}", state.stage.get_clone()),
                                 role="status",
-                                aria-label="실시간 처리 관측"
+                                aria-label="실시간 처리 상태"
                             ) {
                                 div(class="observation-header") {
                                     div(class="observation-title") {
-                                        small { "PROCESS OBSERVATION" }
+                                        small { "PROCESS STATUS" }
                                         strong {
                                             (move || stage_label(
                                                 &state.stage.get_clone(),
@@ -210,7 +210,7 @@ pub(crate) fn StreamingMessage() -> View {
                                 div(class="event-register") {
                                     div(class="register-heading") {
                                         span { "EVENT REGISTER" }
-                                        span { "관측된 상태만 기록" }
+                                        span { "실제 수신 이벤트만 기록" }
                                     }
                                     ol {
                                         (move || {

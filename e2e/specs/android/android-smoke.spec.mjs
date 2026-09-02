@@ -42,7 +42,7 @@ describe("Android APK smoke", () => {
     expect(text).toContain("Sakana API 연결 필요");
     expect(text).not.toContain("\uFFFD");
     expect(await $("#question-input").getAttribute("placeholder")).toBe(
-      "무엇을 깊이 알아볼까요?",
+      "무엇을 알아볼까요?",
     );
   });
 

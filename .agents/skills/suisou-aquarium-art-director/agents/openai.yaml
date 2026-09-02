@@ -1,8 +1,0 @@
-interface:
-  display_name: "Suisou Aquarium Art Director"
-  short_description: "아쿠아리움 UI를 발상·비평·구현·시각 검증"
-  brand_color: "#47BEB6"
-  default_prompt: "Use $suisou-aquarium-art-director to audit the current UI, propose three structurally different aquarium art directions, and recommend one before changing code."
-
-policy:
-  allow_implicit_invocation: true

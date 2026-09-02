@@ -242,7 +242,7 @@ mod ios {
     impl BackgroundExecution for IosBackgroundExecution {
         fn start(&self, job: &ResearchJob) -> Result<(), String> {
             let request_id = cstring(&job.request_id)?;
-            let title = cstring("Suisou 연구 잠수")?;
+            let title = cstring("Suisou 답변 생성")?;
             let subtitle = cstring(stage_label(job))?;
             let started = unsafe {
                 suisou_background_start(request_id.as_ptr(), title.as_ptr(), subtitle.as_ptr())

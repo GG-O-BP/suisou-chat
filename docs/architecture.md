@@ -54,11 +54,11 @@ frontend `App` entry point.
 2. `foundation-content.css` — welcome, transcript, Markdown, and progress.
 3. `foundation-controls.css` — composer, panels, settings, and overlays.
 4. `foundation-responsive.css` — base responsive, theme, and reduced-motion rules.
-5. `observatory-environment.css` — bathymetric tokens, shell, and welcome tank.
-6. `observatory-transcript.css` — illuminated answers and dive telemetry.
-7. `observatory-controls.css` — capsule composer and evidence/control panels.
-8. `observatory-responsive.css` — observatory responsive/theme/motion rules.
-9. `welcome-observatory.css` — focused welcome-tank composition refinements.
+5. `observatory-environment.css` — environmental tokens, shell, and welcome composition.
+6. `observatory-transcript.css` — answer rendering and progress telemetry.
+7. `observatory-controls.css` — composer and source/settings panels.
+8. `observatory-responsive.css` — responsive/theme/motion rules.
+9. `welcome-observatory.css` — focused welcome composition refinements.
 
 Import order is part of the visual contract; do not reorder these files without
 checking light/dark, desktop/mobile, and reduced-motion states.

@@ -6,12 +6,12 @@ pub(crate) fn Welcome() -> View {
     let state = use_context::<AppState>();
     view! {
         section(class="welcome") {
-            h1(class="sr-only") { "Suisou 심해 리서치 관측소" }
+            h1(class="sr-only") { "Suisou AI 리서치" }
             div(class="welcome-observatory") {
                 div(class="observatory-datum", aria-hidden="true") {
-                    span { "SURFACE DATUM" }
+                    span { "REFERENCE DATUM" }
                     i {}
-                    span { "OBS · 01" }
+                    span { "STN · 01" }
                 }
                 div(class="observation-tank", aria-hidden="true") {
                     div(class="tank-rim") {
@@ -34,16 +34,11 @@ pub(crate) fn Welcome() -> View {
                             (icon("spark"))
                         }
                     }
-                    div(class="tank-telemetry") {
-                        span { "SAL 34.7" }
-                        span { "480 M" }
-                        span { "12.4°C" }
-                    }
                 }
                 div(class="welcome-status") {
                     span(class=move || format!("status-beacon {}", if state.key_configured.get() { "ready" } else { "attention" })) {}
                     div {
-                        small { "LIFE SUPPORT · OBSERVATORY 01" }
+                        small { "CONNECTION STATUS" }
                         strong { (move || if state.key_configured.get() { "Sakana Fugu 준비 완료" } else { "Sakana API 연결 필요" }) }
                     }
                     (if !state.key_configured.get() {
@@ -99,10 +94,10 @@ pub(crate) fn Welcome() -> View {
                         mode=""
                     )
                     SuggestionButton(
-                        value="늦은 밤 수족관을 배경으로, 오랜 친구 둘이 숨겨 둔 진심을 처음 꺼내는 짧은 대화 장면을 써 줘",
+                        value="제품 발표를 여는 짧은 인사말을 써 줘",
                         index="04",
-                        title="장면과 대사",
-                        description="분위기 있는 창작 장면 만들기",
+                        title="인사말 작성",
+                        description="발표를 여는 짧은 문장 쓰기",
                         icon_name="create",
                         tone="violet",
                         mode="create"

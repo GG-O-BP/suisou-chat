@@ -12,7 +12,7 @@ describe("controls, shortcuts, panels, and responsive behavior", () => {
     await suggestions[3].click();
 
     await expect($("#question-input")).toHaveValue(
-      expect.stringContaining("늦은 밤 수족관"),
+      expect.stringContaining("인사말"),
     );
     await expect($(".composer-wrap")).toHaveElementClass("mode-create");
 

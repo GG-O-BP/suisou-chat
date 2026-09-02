@@ -54,7 +54,8 @@ pub(super) fn AppRuntime() -> View {
                         if stage_requires_terminal_reconciliation(&event.value) {
                             // `done` is a terminal signal, not an ordinary progress
                             // stage. Reconcile it immediately so the mobile UI can
-                            // never show "처리 완료" while remaining locked.
+                            // never show the "완료" stage label while remaining
+                            // locked.
                             state.reconcile_completed_research_job(event.request_id);
                         } else {
                             state.observe_stage(event.value, now_millis());

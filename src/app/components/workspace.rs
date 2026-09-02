@@ -34,7 +34,7 @@ pub(crate) fn TopBar() -> View {
             div(class="topbar-start") {
                 button(class="icon-button mobile-only", aria-label="대화 기록 열기", on:click=move |_| state.panel.set(Panel::Sidebar)) { (icon("menu")) }
                 div(class="conversation-heading") {
-                    small { "CURRENT DIVE" }
+                    small { "CURRENT CONVERSATION" }
                     strong { (current_title) }
                 }
             }
