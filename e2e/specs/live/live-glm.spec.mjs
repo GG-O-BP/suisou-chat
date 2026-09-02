@@ -1,6 +1,6 @@
 import { nativeInvoke } from "../../helpers/app.mjs";
 
-describe("live Z.ai GLM smoke", () => {
+describe("live Z.ai GLM Coding Plan smoke", () => {
   after(async () => {
     let lastError;
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -34,7 +34,7 @@ describe("live Z.ai GLM smoke", () => {
     throw lastError;
   });
 
-  it("completes one real standard Model API request when explicitly enabled", async () => {
+  it("completes one real Coding Plan search request when explicitly enabled", async () => {
     await $(".app-shell").waitForExist({ timeout: 20_000 });
     const bootstrap = await nativeInvoke("bootstrap");
     const glm = bootstrap.credentials.find(
@@ -42,12 +42,12 @@ describe("live Z.ai GLM smoke", () => {
     );
     if (!glm?.key_configured) {
       throw new Error(
-        "The GLM live smoke requires a standard Z.ai key already stored in the native credential store",
+        "The GLM live smoke requires a Z.ai GLM Coding Plan key already stored in the native credential store",
       );
     }
 
     const modes = await $$(".mode-tabs button");
-    await modes[0].click();
+    await modes[1].click();
     await browser.execute(() => {
       const select = document.querySelector(".model-controls select");
       if (!select) throw new Error("model selector is missing");
@@ -65,7 +65,7 @@ describe("live Z.ai GLM smoke", () => {
       },
     );
     await $("#question-input").setValue(
-      "한 문장으로 조용한 수족관의 분위기를 묘사해 줘.",
+      "공식 출처를 확인하고 오늘 날짜를 알려줘.",
     );
     await $(".send-button").click();
     await $(".message.assistant:not(.streaming), .retry-banner.failed").waitForExist({

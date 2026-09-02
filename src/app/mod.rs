@@ -2,11 +2,11 @@ use crate::icons::icon;
 use crate::ipc;
 use crate::markdown::render_markdown;
 use crate::models::{
-    format_relative_time, new_id, now_millis, provider_for_model, provider_label,
-    remove_conversation, stage_requires_terminal_reconciliation, terminal_job_action,
-    title_from_question, BootstrapResponse, ConnectionInfo, Conversation, InputMessage, Message,
-    ResearchEvent, ResearchJob, ResearchJobObservation, ResearchJobUpdate, ResearchRequest, Source,
-    StartResearchResponse, Workspace,
+    format_relative_time, new_id, now_millis, provider_for_model, provider_key_label,
+    provider_label, remove_conversation, stage_requires_terminal_reconciliation,
+    terminal_job_action, title_from_question, BootstrapResponse, ConnectionInfo, Conversation,
+    InputMessage, Message, ResearchEvent, ResearchJob, ResearchJobObservation, ResearchJobUpdate,
+    ResearchRequest, Source, StartResearchResponse, Workspace,
 };
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};

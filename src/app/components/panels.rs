@@ -122,7 +122,7 @@ pub(crate) fn SettingsPanel() -> View {
                 }
 
                 section(class="setting-section") {
-                    div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "Z.ai GLM API" } p { "표준 Model API 키만 사용합니다. GLM Coding Plan 전용 키와 endpoint는 지원하지 않습니다." } } }
+                    div(class="setting-title") { span(class="setting-number") { "02" } div { h3 { "Z.ai GLM Coding Plan" } p { "구독 quota를 소비하는 Coding Plan endpoint를 사용합니다." } } }
                     (if state.zai_key_configured.get() {
                         view! {
                             div(class="key-connected") {
@@ -147,14 +147,14 @@ pub(crate) fn SettingsPanel() -> View {
                                 event.prevent_default();
                                 state.connect_key("zai");
                             }) {
-                                label(r#for="zai-api-key") { "Z.ai GLM API key" }
+                                label(r#for="zai-api-key") { "Z.ai GLM Coding Plan API key" }
                                 div(class="key-input-row") {
-                                    input(id="zai-api-key", r#type="password", bind:value=state.zai_key_input, autocomplete="off", placeholder="표준 Model API 키 붙여넣기", disabled=state.zai_key_busy)
+                                    input(id="zai-api-key", r#type="password", bind:value=state.zai_key_input, autocomplete="off", placeholder="GLM Coding Plan API 키 붙여넣기", disabled=state.zai_key_busy)
                                     button(r#type="submit", disabled=move || state.zai_key_busy.get() || state.zai_key_input.with(|value| value.trim().is_empty())) {
                                         (move || if state.zai_key_busy.get() { "확인 중…" } else { "연결" })
                                     }
                                 }
-                                p { "키 형식만 로컬에서 확인하고 실제 계정 권한은 첫 GLM 요청에서 검증합니다. 키는 보안 저장소에만 보관합니다." }
+                                p { "키 형식만 로컬에서 확인하고 실제 구독 권한은 첫 GLM 요청에서 검증합니다. 키는 보안 저장소에만 보관합니다." }
                             }
                         }
                     })
@@ -173,7 +173,7 @@ pub(crate) fn SettingsPanel() -> View {
                     div(class="setting-title") { span(class="setting-number") { "04" } div { h3 { "데이터와 개인정보" } p { "대화 기록은 이 기기에만 저장합니다. 답변을 만들 때는 선택한 provider로 질문과 대화 내용을 전송합니다." } } }
                     ul {
                         li { "개인정보·건강·금융·회사 기밀을 입력하지 마세요." }
-                        li { "Sakana와 Z.ai 각각의 보존·학습 설정, 검색 처리, 요금과 약관을 배포 전에 확인하세요." }
+                        li { "Sakana와 Z.ai 각각의 보존·학습 설정, 검색 처리, 요금과 약관을 배포 전에 확인하세요. GLM Coding Plan은 공식 지원 도구/제품 환경으로 사용이 제한될 수 있습니다." }
                         li { "기기 간 동기화는 아직 제공하지 않습니다." }
                     }
                     div(class="policy-links") {

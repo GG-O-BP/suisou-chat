@@ -166,7 +166,7 @@ fn api_key_account(provider: Provider) -> &'static str {
 fn api_key_label(provider: Provider) -> &'static str {
     match provider {
         Provider::Sakana => "Suisou Sakana API key",
-        Provider::Zai => "Suisou Z.ai GLM API key",
+        Provider::Zai => "Suisou Z.ai GLM Coding Plan API key",
     }
 }
 

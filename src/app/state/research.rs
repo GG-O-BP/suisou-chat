@@ -24,8 +24,8 @@ impl AppState {
             self.panel.set(Panel::Settings);
             self.show_toast(
                 format!(
-                    "먼저 설정에서 {} API 키를 연결해 주세요.",
-                    provider_label(&selected_provider)
+                    "먼저 설정에서 {} 키를 연결해 주세요.",
+                    provider_key_label(&selected_provider)
                 ),
                 "warning",
             );

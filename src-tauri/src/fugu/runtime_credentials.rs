@@ -268,7 +268,7 @@ impl FuguRuntime {
             Provider::Zai => Ok(ConnectionInfo {
                 provider,
                 message: format!(
-                    "{} 키 형식을 확인했습니다. 첫 요청에서 계정 권한과 모델 접근을 확인합니다.",
+                    "{} Coding Plan 키 형식을 확인했습니다. 첫 요청에서 구독 권한과 모델 접근을 확인합니다.",
                     provider.key_label()
                 ),
                 models: vec!["glm-5.3".into()],

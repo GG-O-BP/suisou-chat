@@ -333,6 +333,13 @@ pub fn provider_label(provider: &str) -> &'static str {
     }
 }
 
+pub fn provider_key_label(provider: &str) -> &'static str {
+    match provider {
+        "zai" => "Z.ai GLM Coding Plan API",
+        _ => "Sakana API",
+    }
+}
+
 pub fn new_id(prefix: &str) -> String {
     let timestamp = js_sys::Date::now() as u64;
     let random = (js_sys::Math::random() * 1_000_000_000.0) as u64;

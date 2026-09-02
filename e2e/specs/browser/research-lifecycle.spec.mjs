@@ -101,7 +101,7 @@ describe("research lifecycle", () => {
 
     await expect($(".settings-panel")).toHaveElementClass("visible");
     await expect($(".toast")).toHaveText(
-      expect.stringContaining("Z.ai GLM API 키"),
+      expect.stringContaining("Z.ai GLM Coding Plan API 키"),
     );
   });
 });

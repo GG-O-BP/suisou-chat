@@ -24,7 +24,7 @@ impl Provider {
     pub fn key_label(self) -> &'static str {
         match self {
             Self::Sakana => "Sakana API",
-            Self::Zai => "Z.ai GLM API",
+            Self::Zai => "Z.ai GLM Coding Plan API",
         }
     }
 }

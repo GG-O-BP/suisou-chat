@@ -59,7 +59,7 @@ pub(crate) fn TopBar() -> View {
                         if key_configured.get() {
                             format!("{} 연결됨", provider_label(&selected_provider.get_clone()))
                         } else {
-                            format!("{} API 키 필요", provider_label(&selected_provider.get_clone()))
+                            format!("{} 키 필요", provider_key_label(&selected_provider.get_clone()))
                         }
                     }
                 ) {
@@ -69,7 +69,7 @@ pub(crate) fn TopBar() -> View {
                             if key_configured.get() {
                                 format!("{} 연결됨", provider_label(&selected_provider.get_clone()))
                             } else {
-                                format!("{} API 키 필요", provider_label(&selected_provider.get_clone()))
+                                format!("{} 키 필요", provider_key_label(&selected_provider.get_clone()))
                             }
                         })
                     }

@@ -2,7 +2,7 @@
 
 Suisou는 Sakana Fugu와 Z.ai GLM을 선택해 쓸 수 있는 로컬 우선 AI 리서치 워크스페이스입니다. Tauri 2와 Sycamore 0.9로 작성되어 데스크톱과 모바일 셸을 공유하며, 검색형 답변을 빠르게 읽고 출처를 다시 검토하는 흐름에 맞춘 한국어 UI를 제공합니다.
 
-> API 접근 권한은 계정별로 달라질 수 있습니다. Sakana는 `/v1/models`, `/v1/responses`, `web_search`, Responses SSE 이벤트를 사용합니다. Z.ai는 표준 Model API의 `/chat/completions`, `web_search`, Chat Completions SSE를 사용하며 초기 지원 모델은 `glm-5.3`입니다. 배포 전 두 provider의 실제 키로 모델·도구 권한과 과금·약관·지역 정책을 확인하세요.
+> API 접근 권한은 계정별로 달라질 수 있습니다. Sakana는 `/v1/models`, `/v1/responses`, `web_search`, Responses SSE 이벤트를 사용합니다. Z.ai는 GLM Coding Plan의 OpenAI Chat Completions 호환 endpoint `/api/coding/paas/v4/chat/completions`, `web_search`, Chat Completions SSE를 사용하며 초기 지원 모델은 `glm-5.3`입니다. 배포 전 두 provider의 실제 키로 모델·도구 권한과 과금·약관·지역 정책을 확인하세요.
 
 ## 구현 범위
 
@@ -64,15 +64,15 @@ SUISOU_E2E_LIVE=1 npm run e2e:live
 SUISOU_E2E_LIVE=1 npm run e2e:live:glm
 ```
 
-`e2e:live`는 Sakana와 GLM을 모두 실행하고, `e2e:live:glm`은 표준 Z.ai
-Model API 요청만 실행합니다. 상세 구조와 CI/보안 경계는
+`e2e:live`는 Sakana와 GLM을 모두 실행하고, `e2e:live:glm`은 GLM
+Coding Plan 요청만 실행합니다. 상세 구조와 CI/보안 경계는
 [`docs/e2e.md`](docs/e2e.md)를 참고하세요.
 
 앱을 연 뒤 설정에서 사용할 provider의 API 키를 각각 입력하고 **연결**을
-누르세요. Sakana는 모델 목록으로 키를 검증합니다. Z.ai는 공개된 일반
-Model API 모델 목록 엔드포인트가 없으므로 키 형식과 정적 카탈로그를
-확인한 뒤 첫 요청으로 계정 권한을 검증합니다. GLM Coding Plan 전용
-키/endpoint는 지원하지 않습니다.
+누르세요. Sakana는 모델 목록으로 키를 검증합니다. Z.ai는 키 형식과 정적
+카탈로그를 확인한 뒤 첫 요청으로 Coding Plan 계정 권한을 검증합니다.
+Coding Plan 구독은 공식 지원 도구/제품 환경으로 사용이 제한될 수 있으므로
+Z.ai 약관과 계정 상태를 확인하세요.
 
 ### Android 빌드
 
@@ -139,11 +139,11 @@ trunk build --release
 cargo tauri build --no-bundle
 ```
 
-현재 검증 기준에서는 Clippy가 경고 없이 통과하고 51개 작업 공간 테스트가 통과합니다. provider 호환성, GLM 요청/스트리밍/출처/사용량 매핑, 요청 검증, UTF-8 분할/CRLF SSE, API 키 보안 저장·복원·삭제 오류, 작업 공간 저장·백업 복구, Markdown 내보내기를 검사합니다.
+현재 검증 기준에서는 Clippy가 경고 없이 통과하고 53개 작업 공간 테스트가 통과합니다. provider 호환성, GLM Coding Plan 요청/스트리밍/출처/사용량 매핑, 요청 검증, UTF-8 분할/CRLF SSE, API 키 보안 저장·복원·삭제 오류, 작업 공간 저장·백업 복구, Markdown 내보내기를 검사합니다.
 
 ## 출시 전 체크리스트
 
-- 실제 Sakana 및 표준 Z.ai GLM 키로 빠른/검색/심층 모드, 모델명, 웹 검색 스키마를 확인
+- 실제 Sakana 및 GLM Coding Plan 키로 빠른/검색/심층 모드, 모델명, 웹 검색 스키마를 확인
 - 취소·재시도·인증 실패·오프라인·재시작 복구를 대상 OS에서 확인
 - Windows/macOS/Linux 번들 서명과 자동 업데이트 정책 결정
 - Android/iOS 권한, 패키지 ID(`com.ggobp.suisou-chat`), 앱 링크·공유 UX 확인

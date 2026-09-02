@@ -118,7 +118,7 @@ fn too_many_requests_message(
             .and_then(|error| error.code.as_deref())
             .is_some_and(|code| code == "1113")
     {
-        return "Z.ai GLM 표준 Model API 잔액 또는 리소스 패키지가 부족합니다. Z.ai 콘솔에서 표준 Model API 사용량을 충전한 뒤 다시 시도해 주세요.".into();
+        return "Z.ai GLM Coding Plan 잔액 또는 리소스 패키지가 부족합니다. Z.ai 콘솔에서 구독과 결제 상태를 확인한 뒤 다시 시도해 주세요.".into();
     }
 
     let basis = retry_after.map_or_else(
@@ -192,8 +192,8 @@ mod tests {
             }
         }));
         let balance_message = too_many_requests_message(None, Provider::Zai, Some(&balance));
-        assert!(balance_message.contains("표준 Model API 잔액 또는 리소스 패키지"));
-        assert!(balance_message.contains("충전"));
+        assert!(balance_message.contains("Coding Plan 잔액 또는 리소스 패키지"));
+        assert!(balance_message.contains("구독과 결제 상태"));
         assert!(!balance_message.contains("요청 한도"));
 
         let rate_limit = RemoteError {

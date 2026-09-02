@@ -164,6 +164,7 @@ fn modes_have_dedicated_guidance_and_threefold_output_budgets() {
 
 #[test]
 fn builds_a_glm_chat_completions_request_with_the_official_model_id() {
+    assert_eq!(ZAI_API_ROOT, "https://api.z.ai/api/coding/paas/v4");
     let request = ResearchRequest {
         request_id: "request-glm".into(),
         model: "glm-5.3".into(),

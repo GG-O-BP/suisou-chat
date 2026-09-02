@@ -199,8 +199,8 @@ Do not run the live test in untrusted CI environments.
 ### Provider-specific live smoke
 
 Sakana and Z.ai live checks remain opt-in and never accept an API key through a
-file or command argument. To exercise only the standard Z.ai GLM Chat
-Completions path after storing a standard Model API key in the native credential
+file or command argument. To exercise only the Z.ai GLM Coding Plan Chat
+Completions path after storing a Coding Plan API key in the native credential
 store:
 
 ```bash

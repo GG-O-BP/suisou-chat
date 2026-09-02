@@ -27,7 +27,7 @@ use transport::{
 };
 
 const API_ROOT: &str = "https://api.sakana.ai/v1";
-pub(super) const ZAI_API_ROOT: &str = "https://api.z.ai/api/paas/v4";
+pub(super) const ZAI_API_ROOT: &str = "https://api.z.ai/api/coding/paas/v4";
 const KEY_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SSE_FRAME_BYTES: usize = 1024 * 1024;

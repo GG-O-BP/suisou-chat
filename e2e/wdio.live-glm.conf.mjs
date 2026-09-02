@@ -3,7 +3,9 @@ import { config as nativeConfig } from "./wdio.native.conf.mjs";
 import { projectRoot } from "./wdio.shared.mjs";
 
 if (process.env.SUISOU_E2E_LIVE !== "1") {
-  throw new Error("Set SUISOU_E2E_LIVE=1 to run the real Z.ai GLM smoke test");
+  throw new Error(
+    "Set SUISOU_E2E_LIVE=1 to run the real Z.ai GLM Coding Plan smoke test",
+  );
 }
 
 export const config = {

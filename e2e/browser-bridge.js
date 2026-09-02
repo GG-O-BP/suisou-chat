@@ -364,7 +364,7 @@
       provider,
       message:
         provider === "zai"
-          ? "Z.ai GLM API 키 형식을 확인했습니다. 첫 요청에서 계정 권한을 확인합니다."
+          ? "Z.ai GLM Coding Plan API 키 형식을 확인했습니다. 첫 요청에서 구독 권한을 확인합니다."
           : "Sakana API에 안전하게 연결되었습니다.",
       models: provider === "zai" ? ["glm-5.3"] : ["fugu", "fugu-ultra"],
     };

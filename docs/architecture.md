@@ -41,8 +41,8 @@ frontend `App` entry point.
   restoration, and connection verification. Sakana uses the legacy
   `sakana-api-key` credential entry; Z.ai uses `zai-glm-api-key`.
 - `fugu/runtime_research.rs` — provider routing and Sakana Responses requests.
-- `fugu/zai.rs` — Z.ai GLM Chat Completions payload construction, bounded SSE
-  consumption, metadata merging, and completion handling.
+- `fugu/zai.rs` — Z.ai GLM Coding Plan Chat Completions payload construction,
+  bounded SSE consumption, metadata merging, and completion handling.
 - `fugu/stream.rs` — bounded Sakana Responses SSE consumption and shared frame parsing.
 - `fugu/response.rs` — provider answer extraction plus HTTPS/no-userinfo source
   and usage normalization.
